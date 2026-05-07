@@ -101,15 +101,18 @@ def _real_team_id() -> int:
 
 
 def _cleanup_entity_key(entity_key: str) -> None:
-    """Delete any canonical_entity row matching the given entity_key.
+    """Delete any canonical_entities row matching the given entity_key.
 
     Cleanup discipline: each test that inserts uses TEST-1021- prefix on
     entity_key, and calls this helper in a finally block.  No bulk
     teardown.
+
+    Migration 0085 (cleanup epic Slot 1) renamed ``canonical_entity`` ->
+    ``canonical_entities``; SQL body uses the new name.
     """
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM canonical_entity WHERE entity_key = %s",
+            "DELETE FROM canonical_entities WHERE entity_key = %s",
             (entity_key,),
         )
 
@@ -251,7 +254,7 @@ def test_pattern_82_v2_invariant_blocks_update_morphing_to_team_kind_with_null_r
             with get_cursor(commit=True) as cur:
                 cur.execute(
                     """
-                    UPDATE canonical_entity
+                    UPDATE canonical_entities
                     SET entity_kind_id = %s
                     WHERE entity_key = %s
                     """,
@@ -307,7 +310,7 @@ def test_pattern_82_v2_no_non_team_kind_carries_ref_team_id(db_pool: Any) -> Non
         cur.execute(
             """
             SELECT ce.id, ce.entity_key, ce.ref_team_id, k.entity_kind
-            FROM canonical_entity ce
+            FROM canonical_entities ce
             JOIN canonical_entity_kinds k ON k.id = ce.entity_kind_id
             WHERE k.entity_kind <> 'team'
               AND ce.ref_team_id IS NOT NULL
@@ -317,7 +320,7 @@ def test_pattern_82_v2_no_non_team_kind_carries_ref_team_id(db_pool: Any) -> Non
 
     assert violations == [], (
         "Pattern 82 V2 INVERSE-direction violation: "
-        f"{len(violations)} canonical_entity row(s) have a non-team entity_kind "
+        f"{len(violations)} canonical_entities row(s) have a non-team entity_kind "
         f"yet carry a non-NULL ref_team_id. Violation rows: {violations!r}.  "
         "Per ADR-118 V2.40 Item 4 + DEVELOPMENT_PATTERNS V1.37 Pattern 82 V2, "
         "the forward-only trigger does NOT enforce this direction at the "

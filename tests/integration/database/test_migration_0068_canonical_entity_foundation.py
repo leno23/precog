@@ -2,10 +2,18 @@
 
 Verifies the POST-MIGRATION state of the four canonical-entity tables
 introduced by migration 0068 -- ``canonical_entity_kinds``,
-``canonical_entity``, ``canonical_participant_roles``, and
+``canonical_entities`` (renamed from ``canonical_entity`` by Migration 0085 /
+cleanup epic Slot 1), ``canonical_participant_roles``, and
 ``canonical_event_participants`` -- the lookup-table seed rows (12 entity_kinds
 + 10 participant_roles), and the **CONSTRAINT TRIGGER** that enforces the
 polymorphic typed back-ref invariant (``entity_kind='team' => ref_team_id NOT NULL``).
+
+This test file asserts against live post-migration schema (i.e., after
+Alembic upgrades to head, including Migration 0085).  Per build spec
+``memory/build_spec_slot_1_naming_bundle_pm_memo.md`` § 3 treatment rules,
+it is updated in-place to track post-rename column / table identifiers
+since the assertions key on ``information_schema`` queries against the
+live DB rather than re-creating the table via raw SQL.
 
 Test groups:
     - TestTableShapes: each of the 4 tables exists with the expected
@@ -75,15 +83,18 @@ _PARTICIPANT_ROLES_COLS: list[tuple[str, str, str, str | None]] = [
 _EVENT_PARTICIPANTS_COLS: list[tuple[str, str, str, str | None]] = [
     ("id", "bigint", "NO", "nextval"),
     ("canonical_event_id", "bigint", "NO", None),
-    ("entity_id", "bigint", "NO", None),
+    # Migration 0085 renamed canonical_event_participants.entity_id ->
+    # canonical_entity_id (FK column naming rule application).
+    ("canonical_entity_id", "bigint", "NO", None),
     ("role_id", "integer", "NO", None),
     ("sequence_number", "integer", "NO", None),
     ("created_at", "timestamp with time zone", "NO", "now()"),
 ]
 
+# Migration 0085 renamed canonical_entity TABLE -> canonical_entities.
 _TABLE_SPEC: list[tuple[str, list[tuple[str, str, str, str | None]]]] = [
     ("canonical_entity_kinds", _ENTITY_KINDS_COLS),
-    ("canonical_entity", _ENTITY_COLS),
+    ("canonical_entities", _ENTITY_COLS),
     ("canonical_participant_roles", _PARTICIPANT_ROLES_COLS),
     ("canonical_event_participants", _EVENT_PARTICIPANTS_COLS),
 ]
@@ -122,10 +133,16 @@ _EXPECTED_PARTICIPANT_ROLES: list[tuple[str, str]] = [
 
 # Expected indexes per migration upgrade() body (PK / UNIQUE indexes excluded).
 # (table, indexname, must_be_unique, partial_predicate_or_None).
+#
+# Migration 0085 renamed canonical_entity -> canonical_entities; index NAMES
+# are unchanged in this slot (index-name cleanup is deferred to a future
+# cosmetic-cleanup slot per build spec § 11), so the index names below
+# still carry their original "canonical_entity" / "entity_id" suffixes
+# even though their parent tables / columns have been renamed.
 _EXPECTED_INDEXES: list[tuple[str, str, bool, str | None]] = [
-    ("canonical_entity", "idx_canonical_entity_entity_kind_id", False, None),
+    ("canonical_entities", "idx_canonical_entity_entity_kind_id", False, None),
     (
-        "canonical_entity",
+        "canonical_entities",
         "idx_canonical_entity_ref_team_id",
         False,
         "ref_team_id IS NOT NULL",
@@ -344,7 +361,7 @@ def test_constraint_trigger_blocks_team_kind_with_null_ref_team_id(
     # Cleanup any residue from a prior failed run.
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM canonical_entity WHERE entity_key = %s",
+            "DELETE FROM canonical_entities WHERE entity_key = %s",
             (entity_key,),
         )
 
@@ -353,7 +370,7 @@ def test_constraint_trigger_blocks_team_kind_with_null_ref_team_id(
             with get_cursor(commit=True) as cur:
                 cur.execute(
                     """
-                    INSERT INTO canonical_entity
+                    INSERT INTO canonical_entities
                         (entity_kind_id, entity_key, display_name, ref_team_id)
                     VALUES (%s, %s, %s, NULL)
                     """,
@@ -367,7 +384,7 @@ def test_constraint_trigger_blocks_team_kind_with_null_ref_team_id(
         # does NOT leak into the cleanup INSERT. No explicit ROLLBACK needed.
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM canonical_entity WHERE entity_key = %s",
+                "DELETE FROM canonical_entities WHERE entity_key = %s",
                 (entity_key,),
             )
 
@@ -383,7 +400,7 @@ def test_constraint_trigger_allows_team_kind_with_valid_ref_team_id(
 
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM canonical_entity WHERE entity_key = %s",
+            "DELETE FROM canonical_entities WHERE entity_key = %s",
             (entity_key,),
         )
 
@@ -391,7 +408,7 @@ def test_constraint_trigger_allows_team_kind_with_valid_ref_team_id(
         with get_cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO canonical_entity
+                INSERT INTO canonical_entities
                     (entity_kind_id, entity_key, display_name, ref_team_id)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id
@@ -403,7 +420,7 @@ def test_constraint_trigger_allows_team_kind_with_valid_ref_team_id(
     finally:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM canonical_entity WHERE entity_key = %s",
+                "DELETE FROM canonical_entities WHERE entity_key = %s",
                 (entity_key,),
             )
 
@@ -423,7 +440,7 @@ def test_constraint_trigger_skips_non_team_kind_with_null_ref_team_id(
 
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM canonical_entity WHERE entity_key = %s",
+            "DELETE FROM canonical_entities WHERE entity_key = %s",
             (entity_key,),
         )
 
@@ -431,7 +448,7 @@ def test_constraint_trigger_skips_non_team_kind_with_null_ref_team_id(
         with get_cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO canonical_entity
+                INSERT INTO canonical_entities
                     (entity_kind_id, entity_key, display_name, ref_team_id)
                 VALUES (%s, %s, %s, NULL)
                 RETURNING id
@@ -445,7 +462,7 @@ def test_constraint_trigger_skips_non_team_kind_with_null_ref_team_id(
     finally:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM canonical_entity WHERE entity_key = %s",
+                "DELETE FROM canonical_entities WHERE entity_key = %s",
                 (entity_key,),
             )
 
@@ -466,7 +483,7 @@ def test_constraint_trigger_blocks_update_to_team_kind_with_null_ref_team_id(
 
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM canonical_entity WHERE entity_key = %s",
+            "DELETE FROM canonical_entities WHERE entity_key = %s",
             (entity_key,),
         )
 
@@ -475,7 +492,7 @@ def test_constraint_trigger_blocks_update_to_team_kind_with_null_ref_team_id(
         with get_cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO canonical_entity
+                INSERT INTO canonical_entities
                     (entity_kind_id, entity_key, display_name, ref_team_id)
                 VALUES (%s, %s, %s, NULL)
                 """,
@@ -487,7 +504,7 @@ def test_constraint_trigger_blocks_update_to_team_kind_with_null_ref_team_id(
             with get_cursor(commit=True) as cur:
                 cur.execute(
                     """
-                    UPDATE canonical_entity
+                    UPDATE canonical_entities
                     SET entity_kind_id = %s
                     WHERE entity_key = %s
                     """,
@@ -496,7 +513,7 @@ def test_constraint_trigger_blocks_update_to_team_kind_with_null_ref_team_id(
     finally:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM canonical_entity WHERE entity_key = %s",
+                "DELETE FROM canonical_entities WHERE entity_key = %s",
                 (entity_key,),
             )
 
@@ -568,7 +585,7 @@ def test_canonical_entity_unique_kind_key(db_pool: Any) -> None:
             """
             SELECT pg_get_constraintdef(oid) AS def
             FROM pg_constraint
-            WHERE conrelid = 'canonical_entity'::regclass
+            WHERE conrelid = 'canonical_entities'::regclass
               AND conname = 'uq_canonical_entity_kind_key'
             """
         )
@@ -602,13 +619,15 @@ def test_canonical_event_participants_composite_unique(db_pool: Any) -> None:
 #
 # Mirrors the ON DELETE RESTRICT assertion in test_0069 against
 # ``canonical_markets_canonical_event_id_fkey``.  The 3 FKs differ:
-#   - canonical_event_id -> canonical_events(id)        ON DELETE CASCADE
+#   - canonical_event_id          -> canonical_events(id)        ON DELETE CASCADE
 #     (participants are denormalization; deleting the parent event must
 #     cascade-clean its participant rows -- no orphans)
-#   - entity_id          -> canonical_entity(id)        ON DELETE RESTRICT
+#   - canonical_entity_id         -> canonical_entities(id)      ON DELETE RESTRICT
 #     (deleting an entity referenced by a participant row is a data-loss
-#     hazard; force the caller to detach explicitly)
-#   - role_id            -> canonical_participant_roles ON DELETE RESTRICT
+#     hazard; force the caller to detach explicitly).  Migration 0085
+#     renamed the column entity_id -> canonical_entity_id and renamed the
+#     FK constraint to canonical_event_participants_canonical_entity_id_fkey.
+#   - role_id                     -> canonical_participant_roles ON DELETE RESTRICT
 #     (same rationale; lookup-table rows must not be deleted while in use)
 # =============================================================================
 
@@ -621,7 +640,9 @@ def test_canonical_event_participants_composite_unique(db_pool: Any) -> None:
             "ON DELETE CASCADE",
         ),
         (
-            "canonical_event_participants_entity_id_fkey",
+            # Renamed from canonical_event_participants_entity_id_fkey by
+            # Migration 0085 / cleanup epic Slot 1 Surface 4b.
+            "canonical_event_participants_canonical_entity_id_fkey",
             "ON DELETE RESTRICT",
         ),
         (

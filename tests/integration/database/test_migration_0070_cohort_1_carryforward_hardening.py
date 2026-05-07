@@ -241,9 +241,9 @@ def test_lifecycle_phase_check_accepts_each_valid_phase(
             cur.execute(
                 """
                 INSERT INTO canonical_events (
-                    domain_id,
+                    event_domain_id,
                     event_type_id,
-                    entities_sorted,
+                    participants_sorted,
                     resolution_window,
                     natural_key_hash,
                     title,
@@ -292,9 +292,9 @@ def test_lifecycle_phase_check_blocks_invalid_phase(db_pool: Any) -> None:
                 cur.execute(
                     """
                     INSERT INTO canonical_events (
-                        domain_id,
+                        event_domain_id,
                         event_type_id,
-                        entities_sorted,
+                        participants_sorted,
                         resolution_window,
                         natural_key_hash,
                         title,
@@ -343,9 +343,9 @@ def test_lifecycle_phase_check_is_case_sensitive(db_pool: Any) -> None:
                 cur.execute(
                     """
                     INSERT INTO canonical_events (
-                        domain_id,
+                        event_domain_id,
                         event_type_id,
-                        entities_sorted,
+                        participants_sorted,
                         resolution_window,
                         natural_key_hash,
                         title,

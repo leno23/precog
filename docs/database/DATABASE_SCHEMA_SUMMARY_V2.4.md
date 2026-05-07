@@ -1,6 +1,51 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0084, verified=2026-05-02, tables=62, migrations=80, last_changelog_migration=0084 -->
+<!-- FRESHNESS: alembic_head=0085, verified=2026-05-05, tables=62, migrations=81, last_changelog_migration=0085 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0084 -> 0085 (V2.4 amended-in-place, 2026-05-05):
+
+Migration 0085 (cleanup epic Slot 1, session 95) -- canonical naming
+bundle.  Pure naming hygiene against 0-row tables.  Four ALTER renames +
+1 FK constraint rename; no behavioural change.  Lands the operations
+codified by ADR-118 V2.47 amendment text (which lands at Slot 5 / session
+99 per the 5-slot cleanup epic plan).
+
+  - canonical_entity TABLE -> canonical_entities (Surface 1; pluralizes the
+    canonical-tier collection table for parity with canonical_events,
+    canonical_event_participants, canonical_markets, canonical_entity_kinds,
+    etc.).  PG auto-rewrites the inbound FK target from
+    canonical_event_participants on RENAME TABLE.
+  - canonical_events.domain_id -> event_domain_id (Surface 2; FK column
+    naming rule -- column name now identifies the referenced table
+    canonical_event_domains).  Index idx_canonical_events_domain_id name
+    unchanged in this slot (index-name cleanup deferred to a future
+    cosmetic-cleanup slot).
+  - canonical_events.entities_sorted -> participants_sorted (Surface 3;
+    participants vocabulary alignment with canonical_event_participants).
+  - canonical_event_participants.entity_id -> canonical_entity_id +
+    FK constraint canonical_event_participants_entity_id_fkey ->
+    canonical_event_participants_canonical_entity_id_fkey (Surfaces 4a +
+    4b; FK column naming rule application matching the renamed target
+    table).
+
+Migration count 80 -> 81; table count unchanged at 62 (renames only).
+CRUD module crud_canonical_entity.py: signature unchanged but module
+file name not renamed (PM Picard adjudication; file rename deferred to
+future cosmetic-cleanup slot).  CRUD module crud_canonical_events
+function create_canonical_event signature: kwargs domain_id ->
+event_domain_id, entities_sorted -> participants_sorted.  CRUD module
+crud_canonical_event_participants function create_canonical_event_participant
+signature: kwarg entity_id -> canonical_entity_id.
+
+Pattern 87 reaffirmed: zero edits to migrations 0001-0084.  Pattern 91
+V1.44 self-discipline: all 12 build-time premises MCP-verified before
+DDL composition.
+
+Cleanup epic forward plan: Slot 2 (FK direction; CL-1 + CL-2; ~session
+96) -- teams.canonical_entity_id FK + DROP canonical_entities.ref_team_id
++ DROP canonical_events.game_id + series_id.
+
+-->
 <!--
 Changelog from prior FRESHNESS marker (V2.3: alembic_head=0077, verified=2026-04-29, tables=58, migrations=76):
 
@@ -280,8 +325,9 @@ was intentionally upgraded for slot 0073+ per #1085 finding #2 strengthening).
 - **CONSTRAINT TRIGGER for Polymorphic Typed Back-Reference (Pattern 82 / V1.36):**
   When a typed back-ref column's nullability depends on a discriminator that lives in
   a lookup table, the integrity rule cannot be encoded as a CHECK constraint
-  (PG CHECK cannot subquery). The canonical_entity_kinds + canonical_entity pair
-  in Migration 0068 is the canonical instance — see `enforce_canonical_entity_team_backref`.
+  (PG CHECK cannot subquery). The canonical_entity_kinds + canonical_entities pair
+  in Migration 0068 (table renamed by Migration 0085) is the canonical instance —
+  see `enforce_canonical_entity_team_backref`.
 - **Append-Only Migration Files (Pattern 87 / V1.40):** Once an Alembic migration
   is merged to main, its file contents are immutable. Corrections to shipped
   migrations route to ADR amendments or subsequent-migration docstrings, never to
@@ -398,8 +444,9 @@ Partial unique index: 1 current row per `market_id`.
 #### teams (Dimension - SCD Type 2)
 
 Core sports team reference. Supports 9 sports. SCD-2 since Migration 0057.
-Canonical-tier `canonical_entity` carries an optional typed back-ref to
-`teams` (Migration 0068 — the canonical Pattern 82 instance).
+Canonical-tier `canonical_entities` (renamed from `canonical_entity` by
+Migration 0085) carries an optional typed back-ref to `teams`
+(Migration 0068 — the canonical Pattern 82 instance).
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -460,9 +507,11 @@ Full column lists in V2.1 § F.)
 
 The eight canonical_* tables in Migrations 0067-0069
 (`canonical_event_domains`, `canonical_event_types`, `canonical_events`,
-`canonical_entity_kinds`, `canonical_entity`, `canonical_participant_roles`,
-`canonical_event_participants`, `canonical_markets`) establish the "Level B"
-canonical identity layer per ADR-118 V2.38 + V2.39 + V2.40 + V2.41 + V2.42.
+`canonical_entity_kinds`, `canonical_entities` (renamed from
+`canonical_entity` by Migration 0085 / cleanup epic Slot 1),
+`canonical_participant_roles`, `canonical_event_participants`,
+`canonical_markets`) establish the "Level B" canonical identity layer per
+ADR-118 V2.38 + V2.39 + V2.40 + V2.41 + V2.42.
 Full column lists, CONSTRAINT TRIGGER details, and forward-pointer comments
 are in V2.1 § G; this V2.3 revision adds the post-Migration-0076 + 0077
 column-level updates noted below.

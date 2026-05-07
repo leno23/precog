@@ -3,18 +3,28 @@ resolver).
 
 Cohort 1B Pattern 14 retro (issue #1021 Slice C) -- the
 canonical-event-participants typed relation joins canonical_events to
-canonical_entity rows via a discriminator role (the second-tier "Level B"
+canonical_entities rows via a discriminator role (the second-tier "Level B"
 identity edge from ADR-118 V2.38).  Sister module to
 ``crud_canonical_events.py`` (this Slice) and ``crud_canonical_entity.py``
 (Slice B); mirrors their raw-psycopg2 + ``get_cursor`` / ``fetch_one`` +
 RealDictCursor + heavy-docstring conventions verbatim.
 
+Cleanup epic Slot 1 (Migration 0085, V2.47 ADR amendment) renamed
+``canonical_event_participants.entity_id`` -> ``canonical_entity_id`` for
+FK column naming convention parity (target table is ``canonical_entities``,
+so the FK column should carry that name).  The FK constraint was also
+renamed to ``canonical_event_participants_canonical_entity_id_fkey`` for
+consistency.  Keyword argument names and SQL bodies below carry the new
+column name.  ``canonical_participant_roles.domain_id`` is NOT renamed
+(different table; FK targets ``canonical_event_domains.id`` and the local
+column name is appropriately scoped already).
+
 Tables covered:
-    - ``canonical_event_participants`` (Migration 0068) -- the typed
-      relation row.  Composite natural key
-      ``(canonical_event_id, role_id, sequence_number)`` per ADR-118 V2.38
-      decision #6 (admits the 10-candidate election case where 10 rows
-      share role_id with sequence_number 1..10).  See Migration 0068
+    - ``canonical_event_participants`` (Migration 0068; ``canonical_entity_id``
+      per Migration 0085) -- the typed relation row.  Composite natural
+      key ``(canonical_event_id, role_id, sequence_number)`` per ADR-118
+      V2.38 decision #6 (admits the 10-candidate election case where 10
+      rows share role_id with sequence_number 1..10).  See Migration 0068
       docstring for the full DDL rationale and ADR-118 V2.38 decisions.
     - ``canonical_participant_roles`` (lookup, Migration 0068) -- read-only
       resolver helper ``get_canonical_participant_role_id_by_domain_and_role()``
@@ -61,8 +71,10 @@ Cohort 2 deferrals):
     ``retire_canonical_event_participant()`` are exposed because
     ``canonical_event_participants`` was migrated WITHOUT ``updated_at`` and
     WITHOUT ``retired_at`` columns (verified via Migration 0068 DDL --
-    only id, canonical_event_id, entity_id, role_id, sequence_number,
-    created_at).  Per Migration 0068's design intent, participant rows are
+    only id, canonical_event_id, canonical_entity_id, role_id,
+    sequence_number, created_at; ``canonical_entity_id`` was originally
+    named ``entity_id`` and was renamed by Migration 0085 / cleanup epic
+    Slot 1).  Per Migration 0068's design intent, participant rows are
     immutable post-INSERT: edits to who participates in a canonical event
     require RETIRE-and-RECREATE of the participant rows or full event
     retirement (via ``retire_canonical_event``).  Until a future cohort
@@ -86,7 +98,8 @@ Slice C scope (this module) -- exactly these tables:
         * ``canonical_events`` (main canonical event CRUD)
         * ``canonical_event_domains`` + ``canonical_event_types`` (resolvers)
     - NOT covered (already shipped Slice B):
-        * ``canonical_entity`` -- ``crud_canonical_entity.py``
+        * ``canonical_entities`` -- ``crud_canonical_entity.py`` (table
+          renamed by Migration 0085; module file name unchanged)
         * ``canonical_entity_kinds`` -- resolver in ``crud_canonical_entity.py``
     - NOT covered (already shipped Cohort 2):
         * ``canonical_markets`` -- ``crud_canonical_markets.py``
@@ -116,7 +129,7 @@ from .connection import fetch_one, get_cursor
 
 def create_canonical_event_participant(
     canonical_event_id: int,
-    entity_id: int,
+    canonical_entity_id: int,
     role_id: int,
     sequence_number: int,
 ) -> dict[str, Any]:
@@ -124,7 +137,7 @@ def create_canonical_event_participant(
     Create a new canonical_event_participants row.
 
     Canonical event participants are the typed relation rows that join
-    ``canonical_events`` to ``canonical_entity`` rows under a discriminator
+    ``canonical_events`` to ``canonical_entities`` rows under a discriminator
     role (e.g., the home/away split for a sports game, the 10 candidates in
     an election, the affected_location for a weather event).  Per ADR-118
     V2.38 decision #6, the composite natural key is
@@ -132,13 +145,19 @@ def create_canonical_event_participant(
     is REQUIRED with NO default to force caller awareness for multi-row-
     per-role cases.
 
+    Migration 0085 (cleanup epic Slot 1) renamed
+    ``canonical_event_participants.entity_id`` -> ``canonical_entity_id``
+    for FK column naming convention parity with the renamed target table
+    ``canonical_entities``.  The kwarg name on this function mirrors the
+    new column name.
+
     Args:
         canonical_event_id: BIGINT FK into ``canonical_events.id``.  ON
             DELETE CASCADE -- the event going away takes its participant
             rows with it.  Required (NOT NULL).
-        entity_id: BIGINT FK into ``canonical_entity.id``.  ON DELETE
-            RESTRICT -- entities outlive any single event.  Required (NOT
-            NULL).
+        canonical_entity_id: BIGINT FK into ``canonical_entities.id``.  ON
+            DELETE RESTRICT -- entities outlive any single event.  Required
+            (NOT NULL).
         role_id: INTEGER FK into ``canonical_participant_roles.id`` (Pattern
             81 lookup; 10 seeded roles in Migration 0068).  Use
             ``get_canonical_participant_role_id_by_domain_and_role()`` to
@@ -156,8 +175,8 @@ def create_canonical_event_participant(
 
     Returns:
         Full row dict of the created canonical event participant.  Keys:
-            id, canonical_event_id, entity_id, role_id, sequence_number,
-            created_at
+            id, canonical_event_id, canonical_entity_id, role_id,
+            sequence_number, created_at
 
     Raises:
         psycopg2.IntegrityError: If
@@ -165,9 +184,9 @@ def create_canonical_event_participant(
             exists (UNIQUE violation -- constraint
             ``uq_canonical_event_participants``), ``canonical_event_id``
             does not reference a real ``canonical_events`` row,
-            ``entity_id`` does not reference a real ``canonical_entity``
-            row, or ``role_id`` does not reference a real
-            ``canonical_participant_roles`` row.
+            ``canonical_entity_id`` does not reference a real
+            ``canonical_entities`` row, or ``role_id`` does not reference
+            a real ``canonical_participant_roles`` row.
 
     Example (single-row-per-role: sports game home/away):
         >>> from precog.database.crud_canonical_events import (
@@ -186,15 +205,15 @@ def create_canonical_event_participant(
         ... )
         >>> create_canonical_event_participant(
         ...     canonical_event_id=42,
-        ...     entity_id=7,        # canonical_entity for Buffalo Bills
+        ...     canonical_entity_id=7,  # canonical_entities for Buffalo Bills
         ...     role_id=home_role_id,
-        ...     sequence_number=1,  # single home participant
+        ...     sequence_number=1,      # single home participant
         ... )
         >>> create_canonical_event_participant(
         ...     canonical_event_id=42,
-        ...     entity_id=8,        # canonical_entity for Miami Dolphins
+        ...     canonical_entity_id=8,  # canonical_entities for Miami Dolphins
         ...     role_id=away_role_id,
-        ...     sequence_number=1,  # single away participant
+        ...     sequence_number=1,      # single away participant
         ... )
 
     Example (multi-row-per-role: 10-candidate election):
@@ -205,7 +224,7 @@ def create_canonical_event_participant(
         >>> for seq, candidate_entity_id in enumerate(candidate_entity_ids, start=1):
         ...     create_canonical_event_participant(
         ...         canonical_event_id=99,
-        ...         entity_id=candidate_entity_id,
+        ...         canonical_entity_id=candidate_entity_id,
         ...         role_id=candidate_role_id,
         ...         sequence_number=seq,  # 1..10
         ...     )
@@ -213,7 +232,7 @@ def create_canonical_event_participant(
     Educational Note:
         ``canonical_event_participants`` is the typed-edge tier in the
         canonical hierarchy: ``canonical_events`` (one-side) joins
-        ``canonical_entity`` (many-side) through this relation, with the
+        ``canonical_entities`` (many-side) through this relation, with the
         edge labeled by ``role_id`` (Pattern 81 lookup).  This shape is
         what makes the canonical layer polymorphic across domains: a sports
         event has home+away participants; a fighting event has fighter_a/
@@ -242,16 +261,16 @@ def create_canonical_event_participant(
     """
     query = """
         INSERT INTO canonical_event_participants (
-            canonical_event_id, entity_id, role_id, sequence_number
+            canonical_event_id, canonical_entity_id, role_id, sequence_number
         )
         VALUES (%s, %s, %s, %s)
-        RETURNING id, canonical_event_id, entity_id, role_id,
+        RETURNING id, canonical_event_id, canonical_entity_id, role_id,
                   sequence_number, created_at
     """
 
     params = (
         canonical_event_id,
-        entity_id,
+        canonical_entity_id,
         role_id,
         sequence_number,
     )
@@ -274,14 +293,14 @@ def get_canonical_event_participant_by_id(
 
     Returns:
         Full row dict if found, ``None`` otherwise.  Keys:
-            id, canonical_event_id, entity_id, role_id, sequence_number,
-            created_at
+            id, canonical_event_id, canonical_entity_id, role_id,
+            sequence_number, created_at
 
     Example:
         >>> row = get_canonical_event_participant_by_id(7)
         >>> if row:
-        ...     print(row["sequence_number"])    # 1 (or N for multi-row-per-role)
-        ...     print(row["entity_id"])          # canonical_entity.id
+        ...     print(row["sequence_number"])         # 1 (or N for multi-row-per-role)
+        ...     print(row["canonical_entity_id"])     # canonical_entities.id
 
     Educational Note:
         Lookup by surrogate PK is the cheapest path (single B-tree probe on
@@ -295,8 +314,8 @@ def get_canonical_event_participant_by_id(
           lookup-by-PK pattern)
     """
     query = """
-        SELECT id, canonical_event_id, entity_id, role_id, sequence_number,
-               created_at
+        SELECT id, canonical_event_id, canonical_entity_id, role_id,
+               sequence_number, created_at
         FROM canonical_event_participants
         WHERE id = %s
     """
@@ -316,9 +335,10 @@ def get_canonical_event_participant_by_natural_key(
     sequence_number)`` is the UNIQUE composite natural key on
     ``canonical_event_participants`` (constraint
     ``uq_canonical_event_participants`` -- Migration 0068).  A hit means
-    "participant slot already exists, reuse it (or update the entity_id via
-    a separate operation if/when that helper lands)"; a miss means "new
-    participant slot, the caller should create it".
+    "participant slot already exists, reuse it (or update the
+    canonical_entity_id via a separate operation if/when that helper
+    lands)"; a miss means "new participant slot, the caller should
+    create it".
 
     Args:
         canonical_event_id: BIGINT FK into ``canonical_events.id``.
@@ -349,19 +369,19 @@ def get_canonical_event_participant_by_natural_key(
         one row.  The composite UNIQUE index makes the lookup O(log n)
         regardless of table size.
 
-        Note that this lookup does NOT search by ``entity_id`` -- the
-        canonical question is "who plays role X with sequence N in event
-        Y", not "where does entity Z appear".  For the latter (e.g., "list
-        all events where entity Z participated"), a separate helper would
-        be required (out of scope for Slice C).
+        Note that this lookup does NOT search by ``canonical_entity_id``
+        -- the canonical question is "who plays role X with sequence N in
+        event Y", not "where does entity Z appear".  For the latter (e.g.,
+        "list all events where entity Z participated"), a separate helper
+        would be required (out of scope for Slice C).
 
     Reference:
         - Migration 0068 (table DDL -- ``uq_canonical_event_participants``)
         - ADR-118 V2.38 decision #6 (composite natural identity)
     """
     query = """
-        SELECT id, canonical_event_id, entity_id, role_id, sequence_number,
-               created_at
+        SELECT id, canonical_event_id, canonical_entity_id, role_id,
+               sequence_number, created_at
         FROM canonical_event_participants
         WHERE canonical_event_id = %s AND role_id = %s AND sequence_number = %s
     """

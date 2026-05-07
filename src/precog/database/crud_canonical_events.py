@@ -8,10 +8,17 @@ Sister module to ``crud_canonical_markets.py`` (Cohort 2) and
 ``get_cursor`` / ``fetch_one`` + RealDictCursor + heavy-docstring conventions
 verbatim.
 
+Cleanup epic Slot 1 (Migration 0085, V2.47 ADR amendment) renamed two
+columns on ``canonical_events``: ``domain_id`` -> ``event_domain_id``
+(FK column naming convention) and ``entities_sorted`` -> ``participants_sorted``
+(participants vocabulary alignment).  Resolver helpers below carry the
+new column name in their SQL bodies + parameter names.
+
 Tables covered:
-    - ``canonical_events`` (Migration 0067) -- the canonical (platform-
-      agnostic) event row.  Discriminated by ``domain_id`` ->
-      ``canonical_event_domains`` and ``event_type_id`` ->
+    - ``canonical_events`` (Migration 0067; ``event_domain_id`` +
+      ``participants_sorted`` per Migration 0085) -- the canonical
+      (platform-agnostic) event row.  Discriminated by ``event_domain_id``
+      -> ``canonical_event_domains`` and ``event_type_id`` ->
       ``canonical_event_types`` (both Pattern 81 lookups).  ``natural_key_hash``
       is the UNIQUE business identity for cross-platform identity resolution
       (derivation rule is application-layer, deferred to Cohort 5).  See
@@ -21,7 +28,10 @@ Tables covered:
       resolver helper ``get_canonical_event_domain_id_by_domain()`` only.
     - ``canonical_event_types`` (lookup, Migration 0067) -- read-only
       resolver helper ``get_canonical_event_type_id_by_domain_and_type()``
-      only.  Natural key is the composite ``(domain_id, event_type)``.
+      only.  Natural key is the composite ``(domain_id, event_type)``
+      where ``domain_id`` is the local FK column name on
+      ``canonical_event_types`` (NOT renamed by Migration 0085 -- only
+      the corresponding column on ``canonical_events`` was renamed).
 
 Pattern 14 5-step bundle status:
     This module is **step 3 of 5** for Slice C of the Cohort 1A retro
@@ -123,9 +133,9 @@ from .connection import fetch_one, get_cursor
 
 
 def create_canonical_event(
-    domain_id: int,
+    event_domain_id: int,
     event_type_id: int,
-    entities_sorted: list[int],
+    participants_sorted: list[int],
     resolution_window: str,
     natural_key_hash: bytes,
     title: str,
@@ -145,24 +155,29 @@ def create_canonical_event(
     anchor that cross-platform replicas point to via
     ``canonical_event_links`` (Migration 0072+, Cohort 3).
 
+    Migration 0085 (cleanup epic Slot 1) renamed two columns on
+    ``canonical_events``: ``domain_id`` -> ``event_domain_id`` and
+    ``entities_sorted`` -> ``participants_sorted``.  Keyword argument
+    names below mirror the new column names for naming-convention parity.
+
     Args:
-        domain_id: Integer FK into ``canonical_event_domains.id`` (Pattern 81
-            lookup; 7 seeded domains in Migration 0067: sports, politics,
-            weather, econ, news, entertainment, fighting).  Use
-            ``get_canonical_event_domain_id_by_domain()`` to resolve from
-            the human-readable domain string.  ON DELETE RESTRICT --
+        event_domain_id: Integer FK into ``canonical_event_domains.id``
+            (Pattern 81 lookup; 7 seeded domains in Migration 0067:
+            sports, politics, weather, econ, news, entertainment, fighting).
+            Use ``get_canonical_event_domain_id_by_domain()`` to resolve
+            from the human-readable domain string.  ON DELETE RESTRICT --
             domains outlive any single event.
         event_type_id: Integer FK into ``canonical_event_types.id`` (Pattern
             81 lookup; ~13 per-domain event types seeded in Migration 0067).
             Use ``get_canonical_event_type_id_by_domain_and_type()`` to
             resolve from the (domain, event_type) text composite.  ON DELETE
             RESTRICT.
-        entities_sorted: ``INTEGER[]`` array of canonical_entity ids that
-            participate in this event, sorted ascending.  WITHOUT FK
+        participants_sorted: ``INTEGER[]`` array of canonical_entities ids
+            that participate in this event, sorted ascending.  WITHOUT FK
             constraint at the column level (Migration 0067 ships
-            ``entities_sorted`` agnostic to ``canonical_entity`` to avoid a
-            cross-cohort dependency cycle); callers must ensure the ids
-            reference real ``canonical_entity.id`` rows.
+            ``participants_sorted`` agnostic to ``canonical_entities`` to
+            avoid a cross-cohort dependency cycle); callers must ensure
+            the ids reference real ``canonical_entities.id`` rows.
         resolution_window: ``TSTZRANGE`` string (e.g.,
             ``"[2026-04-26 12:00+00, 2026-04-26 16:00+00]"``).  Required
             (NOT NULL).  Defines the time interval within which the event
@@ -204,14 +219,14 @@ def create_canonical_event(
 
     Returns:
         Full row dict of the created canonical event.  Keys:
-            id, domain_id, event_type_id, entities_sorted, resolution_window,
-            resolution_rule_fp, natural_key_hash, title, description,
-            game_id, series_id, lifecycle_phase, metadata, created_at,
-            updated_at, retired_at
+            id, event_domain_id, event_type_id, participants_sorted,
+            resolution_window, resolution_rule_fp, natural_key_hash, title,
+            description, game_id, series_id, lifecycle_phase, metadata,
+            created_at, updated_at, retired_at
 
     Raises:
         psycopg2.IntegrityError: If ``natural_key_hash`` already exists,
-            ``domain_id`` / ``event_type_id`` / ``game_id`` / ``series_id``
+            ``event_domain_id`` / ``event_type_id`` / ``game_id`` / ``series_id``
             do not reference real rows in their target tables, or
             ``resolution_window`` is malformed (PG range parser rejects it).
 
@@ -222,15 +237,15 @@ def create_canonical_event(
         ...     get_canonical_event_type_id_by_domain_and_type,
         ...     create_canonical_event,
         ... )
-        >>> domain_id = get_canonical_event_domain_id_by_domain("sports")
+        >>> event_domain_id = get_canonical_event_domain_id_by_domain("sports")
         >>> event_type_id = get_canonical_event_type_id_by_domain_and_type(
-        ...     domain_id, "game"
+        ...     event_domain_id, "game"
         ... )
         >>> nk = hashlib.sha256(b"NFL|2026-09-04|BUF|MIA").digest()
         >>> row = create_canonical_event(
-        ...     domain_id=domain_id,
+        ...     event_domain_id=event_domain_id,
         ...     event_type_id=event_type_id,
-        ...     entities_sorted=[1, 2],  # canonical_entity ids, ascending
+        ...     participants_sorted=[1, 2],  # canonical_entities ids, ascending
         ...     resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
         ...     natural_key_hash=nk,
         ...     title="Buffalo Bills @ Miami Dolphins, Week 1",
@@ -269,21 +284,21 @@ def create_canonical_event(
     """
     query = """
         INSERT INTO canonical_events (
-            domain_id, event_type_id, entities_sorted, resolution_window,
+            event_domain_id, event_type_id, participants_sorted, resolution_window,
             resolution_rule_fp, natural_key_hash, title, description,
             game_id, series_id, lifecycle_phase, metadata
         )
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id, domain_id, event_type_id, entities_sorted,
+        RETURNING id, event_domain_id, event_type_id, participants_sorted,
                   resolution_window, resolution_rule_fp, natural_key_hash,
                   title, description, game_id, series_id, lifecycle_phase,
                   metadata, created_at, updated_at, retired_at
     """
 
     params = (
-        domain_id,
+        event_domain_id,
         event_type_id,
-        entities_sorted,
+        participants_sorted,
         resolution_window,
         resolution_rule_fp,
         natural_key_hash,
@@ -310,10 +325,10 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
 
     Returns:
         Full row dict if found, ``None`` otherwise.  Keys:
-            id, domain_id, event_type_id, entities_sorted, resolution_window,
-            resolution_rule_fp, natural_key_hash, title, description,
-            game_id, series_id, lifecycle_phase, metadata, created_at,
-            updated_at, retired_at
+            id, event_domain_id, event_type_id, participants_sorted,
+            resolution_window, resolution_rule_fp, natural_key_hash, title,
+            description, game_id, series_id, lifecycle_phase, metadata,
+            created_at, updated_at, retired_at
 
         Post-Migration-0077, the returned ``game_id`` / ``series_id`` MAY
         be NULL even on a row that originally had non-NULL values, due to
@@ -340,10 +355,10 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
           lookup-by-PK pattern)
     """
     query = """
-        SELECT id, domain_id, event_type_id, entities_sorted, resolution_window,
-               resolution_rule_fp, natural_key_hash, title, description,
-               game_id, series_id, lifecycle_phase, metadata,
-               created_at, updated_at, retired_at
+        SELECT id, event_domain_id, event_type_id, participants_sorted,
+               resolution_window, resolution_rule_fp, natural_key_hash,
+               title, description, game_id, series_id, lifecycle_phase,
+               metadata, created_at, updated_at, retired_at
         FROM canonical_events
         WHERE id = %s
     """
@@ -403,10 +418,10 @@ def get_canonical_event_by_natural_key_hash(
         - Future: ``src/precog/matching/`` (Cohort 5)
     """
     query = """
-        SELECT id, domain_id, event_type_id, entities_sorted, resolution_window,
-               resolution_rule_fp, natural_key_hash, title, description,
-               game_id, series_id, lifecycle_phase, metadata,
-               created_at, updated_at, retired_at
+        SELECT id, event_domain_id, event_type_id, participants_sorted,
+               resolution_window, resolution_rule_fp, natural_key_hash,
+               title, description, game_id, series_id, lifecycle_phase,
+               metadata, created_at, updated_at, retired_at
         FROM canonical_events
         WHERE natural_key_hash = %s
     """

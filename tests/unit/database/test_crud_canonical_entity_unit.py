@@ -117,9 +117,12 @@ class TestCreateCanonicalEntity:
         # commit=True must be used because this is a write
         mock_get_cursor.assert_called_once_with(commit=True)
         mock_cursor.execute.assert_called_once()
-        # Verify INSERT + RETURNING query shape
+        # Verify INSERT + RETURNING query shape.  Migration 0085 renamed
+        # canonical_entity -> canonical_entities; the SQL references the
+        # new table name.  Trailing space + open-paren guards against
+        # accidental match on canonical_entity_kinds.
         sql, params = mock_cursor.execute.call_args[0]
-        assert "INSERT INTO canonical_entity" in sql
+        assert "INSERT INTO canonical_entities (" in sql
         assert "RETURNING" in sql
         assert "entity_kind_id" in sql
         assert "entity_key" in sql
@@ -321,7 +324,10 @@ class TestGetCanonicalEntityById:
         assert result == expected_row
         mock_fetch_one.assert_called_once()
         sql, params = mock_fetch_one.call_args[0]
-        assert "FROM canonical_entity" in sql
+        # Migration 0085 renamed canonical_entity -> canonical_entities;
+        # SELECT projects from the new name.  Trailing space guards
+        # against accidental match on canonical_entity_kinds.
+        assert "FROM canonical_entities\n" in sql or "FROM canonical_entities " in sql
         assert "WHERE id = %s" in sql
         assert params == (7,)
 
@@ -381,7 +387,10 @@ class TestGetCanonicalEntityByKindAndKey:
 
         assert result == expected_row
         sql, params = mock_fetch_one.call_args[0]
-        assert "FROM canonical_entity" in sql
+        # Migration 0085 renamed canonical_entity -> canonical_entities.
+        # Trailing space / newline guards against accidental match on
+        # canonical_entity_kinds.
+        assert "FROM canonical_entities\n" in sql or "FROM canonical_entities " in sql
         assert "WHERE entity_kind_id = %s AND entity_key = %s" in sql
         assert params == (1, "BUF-NFL-001")
 

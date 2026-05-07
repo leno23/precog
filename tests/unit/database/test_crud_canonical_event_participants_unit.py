@@ -45,7 +45,7 @@ def _full_row_dict(
     *,
     id: int = 7,
     canonical_event_id: int = 42,
-    entity_id: int = 11,
+    canonical_entity_id: int = 11,
     role_id: int = 1,
     sequence_number: int = 1,
     created_at: datetime | None = None,
@@ -55,23 +55,29 @@ def _full_row_dict(
     Pattern 43 fidelity: every key the real RETURNING / SELECT projection
     emits is present, with no extras.  This is the SSOT for "what does a
     canonical_event_participants row dict look like in tests".
+
+    Migration 0085 (cleanup epic Slot 1) renamed
+    ``canonical_event_participants.entity_id`` -> ``canonical_entity_id``;
+    the helper kwarg + dict key mirror the new column name.
     """
     if created_at is None:
         created_at = datetime(2026, 4, 26, 12, 0, 0, tzinfo=UTC)
     return {
         "id": id,
         "canonical_event_id": canonical_event_id,
-        "entity_id": entity_id,
+        "canonical_entity_id": canonical_entity_id,
         "role_id": role_id,
         "sequence_number": sequence_number,
         "created_at": created_at,
     }
 
 
+# Migration 0085 renamed entity_id -> canonical_entity_id; tuple value
+# mirrors the post-rename column in SELECT/RETURNING projections.
 _ALL_PARTICIPANT_COLUMNS = (
     "id",
     "canonical_event_id",
-    "entity_id",
+    "canonical_entity_id",
     "role_id",
     "sequence_number",
     "created_at",
@@ -93,7 +99,7 @@ class TestCreateCanonicalEventParticipant:
         expected_row = _full_row_dict(
             id=7,
             canonical_event_id=42,
-            entity_id=11,
+            canonical_entity_id=11,
             role_id=1,
             sequence_number=1,
         )
@@ -105,7 +111,7 @@ class TestCreateCanonicalEventParticipant:
 
         result = create_canonical_event_participant(
             canonical_event_id=42,
-            entity_id=11,
+            canonical_entity_id=11,
             role_id=1,
             sequence_number=1,
         )
@@ -119,10 +125,13 @@ class TestCreateCanonicalEventParticipant:
         assert "INSERT INTO canonical_event_participants" in sql
         assert "RETURNING" in sql
         assert "canonical_event_id" in sql
+        assert "canonical_entity_id" in sql
         assert "sequence_number" in sql
-        # Params order matches column order in INSERT statement
+        # Params order matches column order in INSERT statement.
+        # Migration 0085 renamed entity_id -> canonical_entity_id; the
+        # SQL body + param order reflect the post-rename column name.
         assert params[0] == 42  # canonical_event_id
-        assert params[1] == 11  # entity_id
+        assert params[1] == 11  # canonical_entity_id
         assert params[2] == 1  # role_id
         assert params[3] == 1  # sequence_number
 
@@ -145,7 +154,7 @@ class TestCreateCanonicalEventParticipant:
         # 10-candidate election case: sequence_number=10
         create_canonical_event_participant(
             canonical_event_id=99,
-            entity_id=27,
+            canonical_entity_id=27,
             role_id=5,  # 'candidate'
             sequence_number=10,
         )
@@ -170,7 +179,7 @@ class TestCreateCanonicalEventParticipant:
         with pytest.raises(TypeError):
             create_canonical_event_participant(  # type: ignore[call-arg]
                 canonical_event_id=42,
-                entity_id=11,
+                canonical_entity_id=11,
                 role_id=1,
                 # sequence_number intentionally omitted
             )
@@ -191,7 +200,7 @@ class TestCreateCanonicalEventParticipant:
 
         create_canonical_event_participant(
             canonical_event_id=42,
-            entity_id=11,
+            canonical_entity_id=11,
             role_id=1,
             sequence_number=1,
         )

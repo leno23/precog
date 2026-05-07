@@ -1,4 +1,13 @@
-<!-- FRESHNESS: schema as of migration 0084 (V2.45 amendment), session 91 -->
+<!-- FRESHNESS: schema as of migration 0085 (V2.45 amendment + V2.47 cleanup epic Slot 1), session 95 -->
+<!-- Migration 0085 (cleanup epic Slot 1, session 95) renamed:
+       canonical_entity TABLE -> canonical_entities
+       canonical_events.domain_id -> event_domain_id
+       canonical_events.entities_sorted -> participants_sorted
+       canonical_event_participants.entity_id -> canonical_entity_id
+     This doc reflects the post-rename column / table identifiers.
+     Index names and CRUD module file name unchanged in this slot
+     (deferred to a future cosmetic-cleanup slot). -->
+
 
 # Canonical Layer Relationships
 
@@ -105,7 +114,7 @@ The canonical layer comprises 5 layers (4 main + a sub-layer for audit ledgers i
 +---------------------------------------------------------------------------+
 | LAYER 1 — Canonical universal (cross-platform, cross-source identity)     |
 +---------------------------------------------------------------------------+
-| canonical_entity ----+  canonical_event_types     canonical_event_domains |
+| canonical_entities --+  canonical_event_types     canonical_event_domains |
 | (teams, players,     |  (lookup; slot 0071-style) (lookup)                |
 |  weather stations,   |        ^                       ^                   |
 |  candidates)         |        |                       |                   |
@@ -408,7 +417,7 @@ The canonical layer's relationship-verb tables, separated from the audit-ledger 
 
 | Verb table | Connects | Multiplicity | Source of truth for |
 |---|---|---|---|
-| `canonical_event_participants` | `canonical_entity` ↔ `canonical_events` (via `canonical_participant_roles` lookup) | many-to-many | which entities participate in which events, and in what role |
+| `canonical_event_participants` | `canonical_entities` ↔ `canonical_events` (via `canonical_participant_roles` lookup) | many-to-many | which entities participate in which events, and in what role |
 | `canonical_event_links` | `canonical_events` ↔ platform events (`platform_event_id`) | many-to-many | matcher-confirmed event-to-platform-event binding (Layer 1 ↔ Layer 2 connector; canonical_events ↔ canonical_markets is reached transitively via this table → `markets` → `canonical_market_links`) |
 | `canonical_market_links` | `canonical_markets` ↔ `markets` (platform) | many-to-many | matcher-confirmed market-platform binding |
 | `canonical_observation_event_links` (slot 0084 NEW) | `canonical_observations` ↔ `canonical_events` (composite FK) | many-to-many | multi-event tagging (news fans out; econ prints span markets) |

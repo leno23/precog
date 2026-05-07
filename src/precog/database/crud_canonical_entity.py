@@ -1,4 +1,4 @@
-"""CRUD operations for canonical_entity (+ canonical_entity_kinds resolver).
+"""CRUD operations for canonical_entities (+ canonical_entity_kinds resolver).
 
 Cohort 1B Pattern 14 retro (issue #1021 Slice B) -- the canonical-entity tier
 is the second concrete implementation of the "Level B" canonical identity
@@ -6,14 +6,22 @@ layer from ADR-118 V2.40.  Sister module to ``crud_canonical_markets.py``;
 mirrors that module's raw-psycopg2 + ``get_cursor`` / ``fetch_one`` +
 RealDictCursor + heavy-docstring conventions verbatim.
 
+Cleanup epic Slot 1 (Migration 0085, V2.47 ADR amendment) renamed
+``canonical_entity`` to ``canonical_entities`` for naming-convention parity
+with sibling collection tables (``canonical_events``,
+``canonical_event_participants``, ``canonical_markets``).  Module file name
+``crud_canonical_entity.py`` is unchanged in this slot per PM Picard
+adjudication; file rename is a separate cosmetic-cleanup concern.
+
 Tables covered:
-    - ``canonical_entity`` (Migration 0068) -- the canonical (platform-
-      agnostic) polymorphic entity row.  Discriminated by
-      ``entity_kind_id`` -> ``canonical_entity_kinds`` (Pattern 81 lookup).
-      Polymorphic typed back-ref (``ref_team_id`` for entity_kind='team') is
-      enforced via the ``trg_canonical_entity_team_backref`` CONSTRAINT
-      TRIGGER (Pattern 82 V2 instance).  See Migration 0068 docstring for
-      the full DDL rationale and ADR-118 V2.38/V2.40 amendment decisions.
+    - ``canonical_entities`` (Migration 0068, renamed Migration 0085) --
+      the canonical (platform-agnostic) polymorphic entity row.
+      Discriminated by ``entity_kind_id`` -> ``canonical_entity_kinds``
+      (Pattern 81 lookup).  Polymorphic typed back-ref (``ref_team_id``
+      for entity_kind='team') is enforced via the
+      ``trg_canonical_entity_team_backref`` CONSTRAINT TRIGGER (Pattern 82
+      V2 instance).  See Migration 0068 docstring for the full DDL
+      rationale and ADR-118 V2.38/V2.40 amendment decisions.
     - ``canonical_entity_kinds`` (lookup, Migration 0068) -- read-only
       resolver helper ``get_canonical_entity_kind_id_by_kind()`` only.
 
@@ -218,7 +226,7 @@ def create_canonical_entity(
         - ADR-118 V2.38 decisions #1, #5; V2.40 amendment Item 4
     """
     query = """
-        INSERT INTO canonical_entity (
+        INSERT INTO canonical_entities (
             entity_kind_id, entity_key, display_name, ref_team_id, metadata
         )
         VALUES (%s, %s, %s, %s, %s)
@@ -242,10 +250,10 @@ def create_canonical_entity(
 
 def get_canonical_entity_by_id(canonical_entity_id: int) -> dict[str, Any] | None:
     """
-    Get a canonical_entity row by its surrogate integer PK.
+    Get a canonical_entities row by its surrogate integer PK.
 
     Args:
-        canonical_entity_id: BIGSERIAL surrogate PK from ``canonical_entity.id``.
+        canonical_entity_id: BIGSERIAL surrogate PK from ``canonical_entities.id``.
 
     Returns:
         Full row dict if found, ``None`` otherwise.  Keys:
@@ -272,7 +280,7 @@ def get_canonical_entity_by_id(canonical_entity_id: int) -> dict[str, Any] | Non
     query = """
         SELECT id, entity_kind_id, entity_key, display_name, ref_team_id,
                metadata, created_at
-        FROM canonical_entity
+        FROM canonical_entities
         WHERE id = %s
     """
     return fetch_one(query, (canonical_entity_id,))
@@ -283,12 +291,13 @@ def get_canonical_entity_by_kind_and_key(
     entity_key: str,
 ) -> dict[str, Any] | None:
     """
-    Get a canonical_entity row by its (entity_kind_id, entity_key) natural key.
+    Get a canonical_entities row by its (entity_kind_id, entity_key) natural key.
 
     This is the canonical lookup for "do we already have a canonical entity
     for this (kind, key) tuple?"  ``(entity_kind_id, entity_key)`` is the
-    UNIQUE natural composite key on ``canonical_entity`` (constraint
-    ``uq_canonical_entity_kind_key`` -- Migration 0068).  A hit means
+    UNIQUE natural composite key on ``canonical_entities`` (constraint
+    ``uq_canonical_entity_kind_key`` -- Migration 0068, table renamed
+    Migration 0085).  A hit means
     "canonical identity already exists, reuse it"; a miss means "new
     canonical identity, the caller should create it".
 
@@ -330,7 +339,7 @@ def get_canonical_entity_by_kind_and_key(
     query = """
         SELECT id, entity_kind_id, entity_key, display_name, ref_team_id,
                metadata, created_at
-        FROM canonical_entity
+        FROM canonical_entities
         WHERE entity_kind_id = %s AND entity_key = %s
     """
     return fetch_one(query, (entity_kind_id, entity_key))

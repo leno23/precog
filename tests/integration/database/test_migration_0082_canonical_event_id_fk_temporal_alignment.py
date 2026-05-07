@@ -121,9 +121,9 @@ def _seed_canonical_event(suffix: str) -> int:
         cur.execute(
             """
             INSERT INTO canonical_events (
-                domain_id,
+                event_domain_id,
                 event_type_id,
-                entities_sorted,
+                participants_sorted,
                 resolution_window,
                 natural_key_hash,
                 title,

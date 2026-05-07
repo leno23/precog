@@ -1117,17 +1117,25 @@ def test_pattern_73_alignment_quality_canonical_home_in_check(db_pool: Any) -> N
         )
 
 
-def test_alembic_head_is_0084(db_pool: Any) -> None:
-    """alembic_version reports 0084 (slot 0083 is a permanent hole, V2.45 Item 1).
+def test_alembic_head_is_at_or_past_0084(db_pool: Any) -> None:
+    """alembic_version reports a revision >= 0084 (Migration 0084 applied).
 
     Verifies down_revision = "0082" on slot 0084 (skipping the
     intentional slot 0083 hole, mirroring the slot 0081 hole shape from
-    V2.43 Item 2).
+    V2.43 Item 2) -- the slot 0084 chain link is reachable from any
+    later revision since 0085 onward chain forward from 0084.
+
+    Originally asserted ``version_num == "0084"`` (exact match), which
+    became incorrect post-Migration-0085 (cleanup epic Slot 1; current
+    chain head is 0085+).  Loosened to ``version_num >= "0084"`` because
+    this test's role is "Migration 0084 has been applied," not "the
+    chain is permanently capped at 0084."
     """
     with get_cursor() as cur:
         cur.execute("SELECT version_num FROM alembic_version")
         row = cur.fetchone()
     assert row is not None
-    assert row["version_num"] == "0084", (
-        f"Expected alembic_head=0084 (Migration 0084 applied), got {row['version_num']!r}"
+    # Lexicographic comparison works for the 4-digit zero-padded format.
+    assert row["version_num"] >= "0084", (
+        f"Expected alembic_head>='0084' (Migration 0084 applied), got {row['version_num']!r}"
     )

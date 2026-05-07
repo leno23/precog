@@ -292,9 +292,10 @@ def _capture_schema_snapshot(cur: Any) -> dict[str, list[tuple[Any, ...]]]:
     # disambiguator for ARRAY columns: ``information_schema.columns.data_type``
     # returns the literal string ``'ARRAY'`` for any array type, so a future
     # migration changing ``INTEGER[]`` to ``BIGINT[]`` (e.g.,
-    # ``canonical_events.entities_sorted``) would otherwise round-trip as
-    # equal at the snapshot level.  ``udt_name`` distinguishes ``_int4`` from
-    # ``_int8`` and similar.
+    # ``canonical_events.participants_sorted`` post-Migration-0085 -- formerly
+    # ``entities_sorted``) would otherwise round-trip as equal at the
+    # snapshot level.  ``udt_name`` distinguishes ``_int4`` from ``_int8``
+    # and similar.
     cur.execute(
         """
         SELECT

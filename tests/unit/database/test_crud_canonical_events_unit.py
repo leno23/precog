@@ -57,9 +57,9 @@ def _sample_natural_key_hash(suffix: bytes = b"sample") -> bytes:
 def _full_row_dict(
     *,
     id: int = 7,
-    domain_id: int = 1,
+    event_domain_id: int = 1,
     event_type_id: int = 1,
-    entities_sorted: list[int] | None = None,
+    participants_sorted: list[int] | None = None,
     resolution_window: str = "[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
     resolution_rule_fp: bytes | None = None,
     natural_key_hash: bytes | None = None,
@@ -80,8 +80,8 @@ def _full_row_dict(
     canonical_events row dict look like in tests".  Mirrors the
     ``_full_row_dict`` helper in ``test_crud_canonical_markets_unit.py``.
     """
-    if entities_sorted is None:
-        entities_sorted = [1, 2]
+    if participants_sorted is None:
+        participants_sorted = [1, 2]
     if natural_key_hash is None:
         natural_key_hash = _sample_natural_key_hash()
     if created_at is None:
@@ -90,9 +90,9 @@ def _full_row_dict(
         updated_at = datetime(2026, 4, 26, 12, 0, 0, tzinfo=UTC)
     return {
         "id": id,
-        "domain_id": domain_id,
+        "event_domain_id": event_domain_id,
         "event_type_id": event_type_id,
-        "entities_sorted": entities_sorted,
+        "participants_sorted": participants_sorted,
         "resolution_window": resolution_window,
         "resolution_rule_fp": resolution_rule_fp,
         "natural_key_hash": natural_key_hash,
@@ -108,11 +108,15 @@ def _full_row_dict(
     }
 
 
+# Migration 0085 (cleanup epic Slot 1) renamed canonical_events.domain_id
+# -> event_domain_id and canonical_events.entities_sorted ->
+# participants_sorted.  Tuple values mirror the post-rename column names
+# in the SELECT/RETURNING projections.
 _ALL_CANONICAL_EVENTS_COLUMNS = (
     "id",
-    "domain_id",
+    "event_domain_id",
     "event_type_id",
-    "entities_sorted",
+    "participants_sorted",
     "resolution_window",
     "resolution_rule_fp",
     "natural_key_hash",
@@ -143,7 +147,7 @@ class TestCreateCanonicalEvent:
         nk = _sample_natural_key_hash()
         expected_row = _full_row_dict(
             id=7,
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
             natural_key_hash=nk,
             metadata=None,
@@ -155,9 +159,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         result = create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Buffalo Bills @ Miami Dolphins, Week 1",
@@ -168,16 +172,19 @@ class TestCreateCanonicalEvent:
         # commit=True must be used because this is a write
         mock_get_cursor.assert_called_once_with(commit=True)
         mock_cursor.execute.assert_called_once()
-        # Verify INSERT + RETURNING query shape
+        # Verify INSERT + RETURNING query shape.  Migration 0085 (cleanup
+        # epic Slot 1) renamed canonical_events.domain_id -> event_domain_id
+        # and canonical_events.entities_sorted -> participants_sorted.
         sql, params = mock_cursor.execute.call_args[0]
         assert "INSERT INTO canonical_events" in sql
         assert "RETURNING" in sql
-        assert "domain_id" in sql
+        assert "event_domain_id" in sql
         assert "event_type_id" in sql
+        assert "participants_sorted" in sql
         # Params order matches column order in INSERT statement
-        assert params[0] == 1  # domain_id
+        assert params[0] == 1  # event_domain_id
         assert params[1] == 1  # event_type_id
-        assert params[2] == [1, 2]  # entities_sorted
+        assert params[2] == [1, 2]  # participants_sorted
         assert params[3] == "[2026-09-04 17:00+00, 2026-09-04 21:00+00]"  # resolution_window
         assert params[4] is None  # resolution_rule_fp
         assert params[5] == nk  # natural_key_hash (bytes passthrough)
@@ -201,9 +208,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -228,9 +235,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -252,9 +259,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -276,9 +283,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -310,9 +317,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -337,9 +344,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Test Event",
@@ -363,9 +370,9 @@ class TestCreateCanonicalEvent:
         mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         create_canonical_event(
-            domain_id=1,
+            event_domain_id=1,
             event_type_id=1,
-            entities_sorted=[1, 2],
+            participants_sorted=[1, 2],
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=_sample_natural_key_hash(),
             title="Test Event",

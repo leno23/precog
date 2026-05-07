@@ -59,9 +59,13 @@ _EVENT_TYPES_COLS: list[tuple[str, str, str, str | None]] = [
 
 _EVENTS_COLS: list[tuple[str, str, str, str | None]] = [
     ("id", "bigint", "NO", "nextval"),
-    ("domain_id", "integer", "NO", None),
+    # Migration 0085 renamed canonical_events.domain_id -> event_domain_id
+    # (FK column naming rule application; cleanup epic Slot 1).
+    ("event_domain_id", "integer", "NO", None),
     ("event_type_id", "integer", "NO", None),
-    ("entities_sorted", "ARRAY", "NO", None),
+    # Migration 0085 renamed canonical_events.entities_sorted ->
+    # participants_sorted (participants vocabulary alignment).
+    ("participants_sorted", "ARRAY", "NO", None),
     ("resolution_window", "tstzrange", "NO", None),
     ("resolution_rule_fp", "bytea", "YES", None),
     ("natural_key_hash", "bytea", "NO", None),

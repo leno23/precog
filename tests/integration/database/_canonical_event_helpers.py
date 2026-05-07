@@ -28,15 +28,22 @@ def _seed_canonical_event(suffix: str) -> int:
     Uses the seeded ``sports`` domain + ``game`` event_type from migration 0067.
     Caller MUST pair with ``_cleanup_canonical_event(returned_id)`` in a finally
     block.
+
+    Migration 0085 (cleanup epic Slot 1) renamed
+    ``canonical_events.domain_id`` -> ``event_domain_id`` and
+    ``canonical_events.entities_sorted`` -> ``participants_sorted``.
+    The INSERT body uses the post-rename column names.  The lookup
+    against ``canonical_event_types.domain_id`` is unchanged
+    (sibling-table column NOT renamed by Migration 0085).
     """
     nk_hash = f"TEST-evt-{suffix}".encode()
     with get_cursor(commit=True) as cur:
         cur.execute(
             """
             INSERT INTO canonical_events (
-                domain_id,
+                event_domain_id,
                 event_type_id,
-                entities_sorted,
+                participants_sorted,
                 resolution_window,
                 natural_key_hash,
                 title,
