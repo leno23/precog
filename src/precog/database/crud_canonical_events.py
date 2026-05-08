@@ -52,12 +52,12 @@ UPDATE / RETIRE coverage (Slice C deliberate gap, mirrors Cohort 2 Glokta
 Finding 10 and Slice B deferrals):
     This module ships ``create_canonical_event`` + ``retire_canonical_event``
     + lookup helpers.  ``canonical_events`` was migrated WITH ``updated_at``
-    and ``retired_at`` columns (verified via Migration 0067 column list:
-    id, domain_id, event_type_id, entities_sorted, resolution_window,
-    resolution_rule_fp, natural_key_hash, title, description, game_id,
-    series_id, lifecycle_phase, metadata, created_at, updated_at,
-    retired_at), so the canonical-tier ``retire_X`` verb is in scope.  No
-    general ``update_canonical_event_metadata()`` or ``update_canonical_event()``
+    and ``retired_at`` columns (post-Slot-2 column list: id,
+    event_domain_id, event_type_id, participants_sorted, resolution_window,
+    resolution_rule_fp, natural_key_hash, title, description,
+    lifecycle_phase, metadata, created_at, updated_at, retired_at), so the
+    canonical-tier ``retire_X`` verb is in scope.  No general
+    ``update_canonical_event_metadata()`` or ``update_canonical_event()``
     helper -- metadata-enrichment helpers land with Cohort 5+ when the
     matcher pipeline begins writing to ``canonical_events.metadata``.  Until
     then, callers needing UPDATE coverage beyond retirement must NOT write
@@ -81,21 +81,23 @@ Migration 0076):
     DELETEs (per ADR-118 V2.42 sub-amendment B / Migration 0077) -- it
     is NOT a "last canonical content change" timestamp.
 
-Note on ``game_id`` / ``series_id`` (FK ON DELETE SET NULL -- shipped in
-Migration 0077):
-    Both columns are FKs into the platform tier (``games.id`` /
-    ``series.id``) with ``ON DELETE SET NULL`` per ADR-118 V2.42 sub-
-    amendment B.  Callers reading these columns from any row dict MAY
-    observe NULL on either column due to upstream DELETE cascade --
-    a canonical_events row that originally had ``game_id = 42`` will
-    have ``game_id = NULL`` after the corresponding games row is
-    deleted (the canonical row itself survives; only the link is
-    severed).  This realizes the canonical-outlives-platform contract
-    of ADR-118 V2.38: the canonical tier is identity-stable across
-    platform-row turnover (replays, retracted seasons, schedule
-    corrections).  Cohort 5+ matcher code that resolves canonical_event
-    by game_id MUST NOT cache the column -- it can silently transition
-    to NULL between cache fill and read.
+Note on ``game_id`` / ``series_id`` (RETIRED in Migration 0086 -- cleanup
+epic Slot 2 / session 96):
+    Both columns were FKs into the platform tier (``games.id`` /
+    ``series.id``) shipped in Migration 0067 + retrofitted to ``ON DELETE
+    SET NULL`` in Migration 0077 (ADR-118 V2.42 sub-amendment B).
+    Migration 0086 (cleanup epic Slot 2) DROPped both columns as part of
+    the CL-2 denorm collapse: canonical_events is the platform-agnostic
+    identity layer, so carrying platform-side dim FKs on the canonical row
+    was a denormalization shortcut from Cohort 1A.  Post-Slot-2 the
+    platform->canonical direction is the only direction (games references
+    canonical_events via ``games.canonical_event_id`` per Migration 0080;
+    canonical_events does not reference games / series at all).
+    ``create_canonical_event`` no longer accepts ``game_id`` / ``series_id``
+    parameters; row-projection helpers no longer return those columns.
+    Cohort 5+ matcher code that needs the platform-row -> canonical-event
+    direction reads ``games.canonical_event_id`` / ``series.canonical_event_id``
+    directly (slot 0080 + future slots).
 
 Slice C scope (this module) -- exactly these tables:
     - ``canonical_events`` (CRUD: create + 2 lookups + retire);
@@ -140,8 +142,6 @@ def create_canonical_event(
     natural_key_hash: bytes,
     title: str,
     description: str | None = None,
-    game_id: int | None = None,
-    series_id: int | None = None,
     lifecycle_phase: str = "proposed",
     resolution_rule_fp: bytes | None = None,
     metadata: dict | None = None,
@@ -191,18 +191,6 @@ def create_canonical_event(
         title: Human-readable event title (e.g., "Buffalo Bills @ Miami
             Dolphins, Week 1").  ``VARCHAR`` -- NOT NULL.
         description: Optional human-readable description.  ``TEXT``.
-        game_id: Optional FK into platform-sports ``games.id``.  NULLABLE --
-            most non-sports-domain events have NULL ``game_id``.  Post-
-            Migration-0077, the FK carries ``ON DELETE SET NULL`` per
-            ADR-118 V2.42 sub-amendment B; callers reading ``game_id``
-            from a row dict MAY observe NULL on a row that originally
-            had a non-NULL value, due to upstream ``DELETE FROM games``
-            cascading to SET NULL.  Code that branches on ``game_id IS
-            NOT NULL`` MUST tolerate the column transitioning to NULL
-            asynchronously.
-        series_id: Optional FK into platform-sports ``series.id``.  NULLABLE
-            -- mirrors ``game_id`` semantics, including the post-Migration-
-            0077 ``ON DELETE SET NULL`` cascade behavior described above.
         lifecycle_phase: Closed-enum-like string.  Defaults to ``'proposed'``
             per ADR-118 V2.38 Phase B.5 state machine.  Migration 0067
             ships this as ``VARCHAR(32) NOT NULL DEFAULT 'proposed'`` with
@@ -221,14 +209,14 @@ def create_canonical_event(
         Full row dict of the created canonical event.  Keys:
             id, event_domain_id, event_type_id, participants_sorted,
             resolution_window, resolution_rule_fp, natural_key_hash, title,
-            description, game_id, series_id, lifecycle_phase, metadata,
-            created_at, updated_at, retired_at
+            description, lifecycle_phase, metadata, created_at, updated_at,
+            retired_at
 
     Raises:
         psycopg2.IntegrityError: If ``natural_key_hash`` already exists,
-            ``event_domain_id`` / ``event_type_id`` / ``game_id`` / ``series_id``
-            do not reference real rows in their target tables, or
-            ``resolution_window`` is malformed (PG range parser rejects it).
+            ``event_domain_id`` / ``event_type_id`` do not reference real
+            rows in their target tables, or ``resolution_window`` is
+            malformed (PG range parser rejects it).
 
     Example:
         >>> import hashlib
@@ -249,7 +237,6 @@ def create_canonical_event(
         ...     resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
         ...     natural_key_hash=nk,
         ...     title="Buffalo Bills @ Miami Dolphins, Week 1",
-        ...     game_id=42,
         ... )
         >>> row["id"]  # BIGSERIAL surrogate PK
         7
@@ -286,13 +273,13 @@ def create_canonical_event(
         INSERT INTO canonical_events (
             event_domain_id, event_type_id, participants_sorted, resolution_window,
             resolution_rule_fp, natural_key_hash, title, description,
-            game_id, series_id, lifecycle_phase, metadata
+            lifecycle_phase, metadata
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id, event_domain_id, event_type_id, participants_sorted,
                   resolution_window, resolution_rule_fp, natural_key_hash,
-                  title, description, game_id, series_id, lifecycle_phase,
-                  metadata, created_at, updated_at, retired_at
+                  title, description, lifecycle_phase, metadata,
+                  created_at, updated_at, retired_at
     """
 
     params = (
@@ -304,8 +291,6 @@ def create_canonical_event(
         natural_key_hash,
         title,
         description,
-        game_id,
-        series_id,
         lifecycle_phase,
         json.dumps(metadata) if metadata is not None else None,
     )
@@ -327,14 +312,13 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
         Full row dict if found, ``None`` otherwise.  Keys:
             id, event_domain_id, event_type_id, participants_sorted,
             resolution_window, resolution_rule_fp, natural_key_hash, title,
-            description, game_id, series_id, lifecycle_phase, metadata,
+            description, lifecycle_phase, metadata,
             created_at, updated_at, retired_at
 
-        Post-Migration-0077, the returned ``game_id`` / ``series_id`` MAY
-        be NULL even on a row that originally had non-NULL values, due to
-        upstream ``DELETE FROM games``/``DELETE FROM series`` cascading to
-        SET NULL per ADR-118 V2.42 sub-amendment B.  Callers MUST tolerate
-        these columns being NULL.
+        Migration 0086 (cleanup epic Slot 2 / session 96) DROPped
+        ``game_id`` / ``series_id`` from the column inventory; callers
+        needing the platform-row -> canonical-event direction read
+        ``games.canonical_event_id`` directly (slot 0080).
 
     Example:
         >>> row = get_canonical_event_by_id(7)
@@ -357,7 +341,7 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
     query = """
         SELECT id, event_domain_id, event_type_id, participants_sorted,
                resolution_window, resolution_rule_fp, natural_key_hash,
-               title, description, game_id, series_id, lifecycle_phase,
+               title, description, lifecycle_phase,
                metadata, created_at, updated_at, retired_at
         FROM canonical_events
         WHERE id = %s
@@ -385,11 +369,8 @@ def get_canonical_event_by_natural_key_hash(
 
     Returns:
         Full row dict if found, ``None`` otherwise.  Same keys as
-        ``get_canonical_event_by_id``, including the post-Migration-0077
-        SET NULL caveat on ``game_id`` / ``series_id``: callers MUST
-        tolerate either column being NULL even on rows that originally
-        had non-NULL values (upstream ``DELETE FROM games``/``DELETE FROM
-        series`` cascades to SET NULL per ADR-118 V2.42 sub-amendment B).
+        ``get_canonical_event_by_id``.  Post-Migration-0086 (cleanup epic
+        Slot 2) the column inventory excludes ``game_id`` / ``series_id``.
 
     Example:
         >>> import hashlib
@@ -420,7 +401,7 @@ def get_canonical_event_by_natural_key_hash(
     query = """
         SELECT id, event_domain_id, event_type_id, participants_sorted,
                resolution_window, resolution_rule_fp, natural_key_hash,
-               title, description, game_id, series_id, lifecycle_phase,
+               title, description, lifecycle_phase,
                metadata, created_at, updated_at, retired_at
         FROM canonical_events
         WHERE natural_key_hash = %s

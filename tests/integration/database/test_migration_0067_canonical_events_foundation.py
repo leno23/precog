@@ -71,8 +71,12 @@ _EVENTS_COLS: list[tuple[str, str, str, str | None]] = [
     ("natural_key_hash", "bytea", "NO", None),
     ("title", "character varying", "NO", None),
     ("description", "text", "YES", None),
-    ("game_id", "integer", "YES", None),
-    ("series_id", "integer", "YES", None),
+    # Migration 0086 (cleanup epic Slot 2 / session 96) DROPped
+    # canonical_events.game_id and canonical_events.series_id (CL-2 denorm
+    # collapse).  The associated FK constraints + partial indexes auto-
+    # dropped with their columns.  Slot 4 (CL-3) handles the
+    # games.game_status drop separately; canonical_events itself no longer
+    # carries platform-side dim FKs post-Slot-2.
     ("lifecycle_phase", "character varying", "NO", "proposed"),
     ("metadata", "jsonb", "YES", None),
     ("created_at", "timestamp with time zone", "NO", "now()"),
@@ -125,18 +129,10 @@ _EXPECTED_INDEXES: list[tuple[str, str, bool, str | None]] = [
     ("canonical_event_types", "idx_canonical_event_types_domain_id", False, None),
     ("canonical_events", "idx_canonical_events_domain_id", False, None),
     ("canonical_events", "idx_canonical_events_event_type_id", False, None),
-    (
-        "canonical_events",
-        "idx_canonical_events_game_id",
-        False,
-        "game_id IS NOT NULL",
-    ),
-    (
-        "canonical_events",
-        "idx_canonical_events_series_id",
-        False,
-        "series_id IS NOT NULL",
-    ),
+    # Migration 0086 (cleanup epic Slot 2 / session 96) auto-dropped
+    # idx_canonical_events_game_id + idx_canonical_events_series_id when
+    # the underlying columns were DROPPED (PG semantic: partial indexes
+    # on a dropped column drop with the column).
 ]
 
 
@@ -406,6 +402,18 @@ def test_canonical_events_natural_key_hash_unique(db_pool: Any) -> None:
 # =============================================================================
 
 
+@pytest.mark.skip(
+    reason=(
+        "Migration 0086 (cleanup epic Slot 2 / session 96) DROPped "
+        "canonical_events.game_id + canonical_events.series_id columns "
+        "(CL-2 denorm collapse).  The FK constraints "
+        "canonical_events_game_id_fkey + canonical_events_series_id_fkey "
+        "auto-dropped with their columns; the Migration 0077 polarity "
+        "assertion is preserved historically (Pattern 87) but no longer "
+        "applies post-Slot-2.  Formal retirement at V2.47 / Slot 5 / "
+        "session 99 (issue #1155)."
+    )
+)
 @pytest.mark.parametrize(
     ("constraint_name", "expected_clause"),
     [
@@ -420,13 +428,12 @@ def test_canonical_events_fk_on_delete_clause(
 ) -> None:
     """Pin the ON DELETE clause on canonical_events FKs (game_id, series_id).
 
-    Post-Migration-0077 (ADR-118 V2.42 sub-amendment B), both FKs carry
-    ``ON DELETE SET NULL``.  PG's ``pg_get_constraintdef`` emits the
-    explicit ``ON DELETE SET NULL`` substring whenever the action is non-
-    default (NO ACTION is the only default that gets omitted from the
-    rendering).  This test asserts the SET NULL clause is PRESENT in the
-    constraint definition -- a positive assertion that surfaces drift
-    cleanly if any future migration reverts the polarity.
+    SKIPPED post-Migration-0086 (cleanup epic Slot 2 / session 96): both
+    canonical_events.game_id + canonical_events.series_id columns DROPPED;
+    the FK constraints they carried auto-dropped with them.  The ON DELETE
+    SET NULL polarity work from Migration 0077 (ADR-118 V2.42 sub-amendment
+    B) is preserved historically (Pattern 87 -- migration file immutable)
+    but no longer applies post-Slot-2.
     """
     with get_cursor() as cur:
         cur.execute(
@@ -441,11 +448,6 @@ def test_canonical_events_fk_on_delete_clause(
         row = cur.fetchone()
     assert row is not None, f"{constraint_name} must exist on canonical_events"
     fk_def = row["def"]
-    # Positive assertion: the SET NULL clause must be present.  Galadriel
-    # restructure -- pre-#1075 the assertion was absence-of-other-clauses
-    # because NO ACTION was the default and PG omits the textual rendering;
-    # post-#1075 the SET NULL action is non-default and PG emits it
-    # explicitly, which makes the positive assertion the cleaner shape.
     assert expected_clause in fk_def, (
         f"{constraint_name} must include {expected_clause!r}; got: {fk_def}"
     )

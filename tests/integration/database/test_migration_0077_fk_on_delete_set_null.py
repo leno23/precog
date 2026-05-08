@@ -1,38 +1,35 @@
 """Integration tests for Migration 0077 -- canonical_events FK ON DELETE SET NULL.
 
-Verifies the POST-MIGRATION state of the two ``canonical_events`` FK
-constraints retrofitted by Migration 0077 (ADR-118 V2.42 sub-amendment B,
-issue #1075).  Migration 0077 ships:
+Originally verified the POST-MIGRATION state of the two ``canonical_events``
+FK constraints retrofitted by Migration 0077 (ADR-118 V2.42 sub-amendment B,
+issue #1075):
+    1. ``canonical_events_game_id_fkey`` -- ON DELETE SET NULL polarity.
+    2. ``canonical_events_series_id_fkey`` -- ON DELETE SET NULL polarity.
 
-    1. ``ALTER TABLE canonical_events DROP CONSTRAINT
-       canonical_events_game_id_fkey`` followed by ADD CONSTRAINT with
-       ``ON DELETE SET NULL`` and the original constraint name preserved.
-    2. Same DROP/ADD pair for ``canonical_events_series_id_fkey``.
+**RETIRED at Migration 0086 (cleanup epic Slot 2 / session 96):** Slot 2
+DROPped both ``canonical_events.game_id`` and ``canonical_events.series_id``
+columns as part of the CL-2 denorm collapse.  The FK constraints (and any
+ON DELETE polarity that applied to them) auto-dropped with their columns.
+The behavioral cascade tests + polarity assertions in this file all key on
+columns that no longer exist post-Slot-2; the entire file is module-skipped.
 
-Test groups:
-    - TestConstraintPolarity: both FKs render with ``ON DELETE SET NULL``
-      via ``pg_get_constraintdef``; constraint NAMES are preserved across
-      the DROP/ADD pair (Holden-FK -- PG default-generated names would
-      break the pinned-by-name assertion in test_migration_0067 lines
-      400-450).
-    - TestBehavioralCascadeGameId: INSERT a games row, INSERT a
-      canonical_events row referencing it via game_id, DELETE the games
-      row, ASSERT the canonical_events row survives with
-      ``game_id IS NULL``.
-    - TestBehavioralCascadeSeriesId: sibling test for series.
+The Migration 0077 polarity work is preserved historically -- Pattern 87
+(Append-only migration files) makes the migration file itself immutable,
+and the docstring + DDL accurately describe the schema state at slot 0077's
+ship time.  Future readers reconstructing schema from migrations replay
+0077 -> ... -> 0086 in order, observing the SET NULL polarity apply at
+0077 and the columns drop at 0086.  This is correct, not stale.
 
-Cross-references the round-trip CI gate (PR #1081 / Issue #1066): the
-``downgrade()`` reverses the ALTER pair cleanly (DROP CONSTRAINT + ADD
-CONSTRAINT WITHOUT ON DELETE clause -- restores PG default NO ACTION
-matching the Migration 0067 pre-retrofit state).  Round-trip is exercised
-by ``tests/integration/migrations/test_round_trip.py`` which programmatically
-runs ``downgrade(0076) -> upgrade head`` on every parametrized revision
-post-0067.
+The module-level skip preserves the file as historical witness without
+asserting against dropped columns.  When the cleanup-epic Slot 5 / V2.47
+ADR amendment ships (session 99), this file may be deleted outright as
+part of the same cleanup; the skip is the lower-cost interim shape.
 
 Issue: #1075 (ADR-118 V2.42 sub-amendment B retrofit)
-ADR: ADR-118 V2.42 sub-amendment B (canonical_events FK ON DELETE SET NULL)
-Council: ``memory/design_review_0076_synthesis.md`` (Holden + Galadriel +
-    Miles + Uhura, session 83)
+       #1155 (canonical-layer simplification epic, Slot 2 retirement)
+ADR: ADR-118 V2.42 sub-amendment B (Migration 0077 polarity);
+     ADR-118 V2.47 amendment lands at Slot 5 / session 99 (codifies the
+     Slot 2 denorm collapse that retires these columns).
 
 Markers:
     @pytest.mark.integration: real DB required.
@@ -47,7 +44,20 @@ import pytest
 
 from precog.database.connection import get_cursor
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skip(
+        reason=(
+            "Migration 0086 (cleanup epic Slot 2 / session 96) DROPped "
+            "canonical_events.game_id + canonical_events.series_id columns "
+            "(CL-2 denorm collapse).  The FK polarity assertions + cascade "
+            "behavioral tests in this file key on columns that no longer "
+            "exist post-Slot-2; module-level skip preserves the file as "
+            "historical witness.  Formal retirement at V2.47 / Slot 5 / "
+            "session 99 (issue #1155)."
+        )
+    ),
+]
 
 
 # Constraint names retrofitted in slot 0077.  Pattern 73 SSOT for the

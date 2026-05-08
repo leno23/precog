@@ -1,6 +1,64 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0085, verified=2026-05-05, tables=62, migrations=81, last_changelog_migration=0085 -->
+<!-- FRESHNESS: alembic_head=0086, verified=2026-05-07, tables=62, migrations=82, last_changelog_migration=0086 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0085 -> 0086 (V2.4 amended-in-place, 2026-05-07):
+
+Migration 0086 (cleanup epic Slot 2, session 96) -- canonical FK direction
+flip + denorm collapse.  Realizes CL-1 + CL-2 from session 94 cleanup-epic
+council synthesis; ADR-118 V2.47 amendment codifies the rule (lands at
+Slot 5 / session 99).
+
+Nine schema-mutation surfaces in single transaction (hard ordering
+invariant: trigger before column):
+
+  - ADD teams.canonical_entity_id BIGINT NULL (1,034 existing rows start
+    NULL; populated by Cohort 5+ matcher slot ~session 101).
+  - ADD CONSTRAINT FK NOT VALID teams_canonical_entity_id_fkey ->
+    canonical_entities(id) ON DELETE SET NULL (Pattern 84 by-analogy 3rd
+    use; precedent-consistency style not safety -- empty target table
+    means VALIDATE is no-op).
+  - VALIDATE CONSTRAINT teams_canonical_entity_id_fkey (no-op against
+    empty target).
+  - DROP TRIGGER trg_canonical_entity_team_backref ON canonical_entities.
+  - DROP FUNCTION enforce_canonical_entity_team_backref() (sentinel
+    cleanup -- DROP TRIGGER does not auto-DROP the underlying function).
+  - DROP CONSTRAINT canonical_entity_ref_team_id_fkey ON canonical_entities.
+  - DROP COLUMN canonical_entities.ref_team_id (partial index
+    idx_canonical_entity_ref_team_id auto-drops with the column).
+  - DROP COLUMN canonical_events.game_id (FK constraint
+    canonical_events_game_id_fkey auto-drops with the column).
+  - DROP COLUMN canonical_events.series_id (FK constraint
+    canonical_events_series_id_fkey auto-drops with the column).
+
+Pattern 87 reaffirmed: zero edits to migrations 0001-0085.  Migration 0068
+remains canonical for the trigger DDL; slot 0086's downgrade() reproduces
+the trigger function body verbatim from 0068 lines 273-290.
+
+Pattern 91 V1.44 self-discipline: all build-time premises MCP-verified
+before DDL composition (alembic_head=0085, teams=1,034, canonical_entities
++ canonical_events both at 0 rows, FK constraints + trigger + function +
+columns confirmed present pre-migration).
+
+Pattern 82 V2 retirement (canonical_entities-team variant): the
+load-bearing polymorphic-invariant test
+tests/database/test_canonical_entity_polymorphic_invariants.py is DELETED
+at Slot 2 per Path A user adjudication.  ADR-118 V2.40 Item 4 + Pattern 82
+V2 carry inline forward-pointer notes to V2.47 (Slot 5 / session 99) for
+formal pin retirement + Pattern 82 V2 scope-narrowing (rule retains for
+canonical_markets only post-Slot-2).  CRUD module crud_canonical_entity.py:
+create_canonical_entity() loses the ref_team_id parameter; module file
+name unchanged.
+
+Migration count 81 -> 82; table count unchanged at 62 (no table changes;
+column changes only).
+
+Cleanup epic forward plan: Slot 3 (CL-7 retirement cascade; ~session 97)
+-- canonical_events.superseded_by FK + SSOT helper.  Slot 4 (CL-3
+invasiveness narrow; ~session 98).  Slot 5 (V2.47 ADR amendment + Pattern
+82 V2 scope-narrowing + #1163 cosmetic-cleanup folding; ~session 99).
+
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0084 -> 0085 (V2.4 amended-in-place, 2026-05-05):
 
@@ -444,9 +502,16 @@ Partial unique index: 1 current row per `market_id`.
 #### teams (Dimension - SCD Type 2)
 
 Core sports team reference. Supports 9 sports. SCD-2 since Migration 0057.
-Canonical-tier `canonical_entities` (renamed from `canonical_entity` by
-Migration 0085) carries an optional typed back-ref to `teams`
-(Migration 0068 — the canonical Pattern 82 instance).
+Cleanup epic Slot 2 (Migration 0086, session 96) flipped the FK direction
+between `teams` and `canonical_entities`: `teams.canonical_entity_id`
+(BIGINT NULL FK to `canonical_entities(id)` ON DELETE SET NULL) replaces
+the pre-Slot-2 typed back-ref `canonical_entities.ref_team_id`. The
+polymorphic enforcement trigger `trg_canonical_entity_team_backref` is
+also dropped at Slot 2 (Pattern 82 V2 scope-narrowing in V2.47 — applies
+to `canonical_markets` only post-cleanup-epic Slot 2). All 1,034 existing
+rows start NULL on `canonical_entity_id`; the Cohort 5+ matcher slot
+(~session 101) populates the column when canonical_entities rows are
+first seeded.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -459,6 +524,7 @@ Migration 0085) carries an optional typed back-ref to `teams`
 | kalshi_team_code | VARCHAR(50) | Added Migration 0041 |
 | classification | VARCHAR(20) | Added Migration 0042 (d1, fbs, fcs, etc.) |
 | current_elo_rating | DECIMAL(10,2) | |
+| canonical_entity_id | BIGINT | NULLABLE FK -> `canonical_entities(id)` ON DELETE SET NULL; **added Migration 0086** (cleanup epic Slot 2 / session 96 — FK direction flip from pre-Slot-2 `canonical_entities.ref_team_id`; all 1,034 rows start NULL; populated by Cohort 5+ matcher slot ~session 101) |
 | row_current_ind | BOOLEAN | SCD-2 (added Migration 0057) |
 | row_start_ts, row_end_ts | TIMESTAMPTZ | SCD-2 (added Migration 0057) |
 
@@ -525,7 +591,7 @@ The tables Cohort 3 builds atop (and the close-out retrofits applied to them):
     closes the orphan-trigger gap from Migration 0067 (column existed since
     0067:249, no trigger ever shipped to maintain it).  Trigger executes
     the generic `set_updated_at()` function (§ J).
-  - **Column-level update (Migration 0077 / V2.42 sub-amendment B):**
+  - **Column-level update (Migration 0077 / V2.42 sub-amendment B) — pre-Slot-2 state:**
     - `game_id` (FK -> `games.id`): nullable; **may be NULLed by upstream
       `DELETE FROM games`** per `ON DELETE SET NULL` (was `ON DELETE NO
       ACTION` pre-Migration-0077).  Realizes ADR-118 V2.42 sub-amendment B
@@ -542,6 +608,19 @@ The tables Cohort 3 builds atop (and the close-out retrofits applied to them):
       AND updated_at >= now() - INTERVAL 'N days'` is a noisy proxy for
       "FK was NULLed recently" — see Migration 0077 docstring for the
       canonical query template + LIMITATION note.
+  - **Column-level update (Migration 0086 / cleanup epic Slot 2 — denorm collapse):**
+    Both `canonical_events.game_id` and `canonical_events.series_id` are
+    **DROPPED** by Migration 0086 (CL-2 denorm collapse from session 94
+    cleanup-epic council synthesis).  Rationale: canonical_events is the
+    platform-agnostic identity layer; carrying platform-side dim FKs on the
+    canonical row was a denormalization shortcut from Cohort 1A.  Post-
+    Slot-2 the platform→canonical direction is the only direction (games
+    references canonical_events via `games.canonical_event_id` per slot
+    0080; canonical_events does not reference games / series at all).  The
+    associated FK constraints `canonical_events_game_id_fkey` +
+    `canonical_events_series_id_fkey` auto-drop with their columns. The
+    Migration 0077 SET NULL polarity work above is preserved historically
+    (Pattern 87 immutable) but no longer applies post-Slot-2.
 - `canonical_markets` — referenced by `canonical_market_links.canonical_market_id`
   (slot 0072) with `ON DELETE RESTRICT`; by `canonical_match_log.canonical_market_id`
   (slot 0073) with `ON DELETE SET NULL` (Holden P1 catch — explicit closure of the

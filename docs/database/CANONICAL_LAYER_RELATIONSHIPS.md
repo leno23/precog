@@ -1,10 +1,23 @@
-<!-- FRESHNESS: schema as of migration 0085 (V2.45 amendment + V2.47 cleanup epic Slot 1), session 95 -->
+<!-- FRESHNESS: schema as of migration 0086 (V2.45 amendment + V2.47 cleanup epic Slots 1+2), session 96 -->
 <!-- Migration 0085 (cleanup epic Slot 1, session 95) renamed:
        canonical_entity TABLE -> canonical_entities
        canonical_events.domain_id -> event_domain_id
        canonical_events.entities_sorted -> participants_sorted
        canonical_event_participants.entity_id -> canonical_entity_id
-     This doc reflects the post-rename column / table identifiers.
+     Migration 0086 (cleanup epic Slot 2, session 96) flipped FK direction
+     + collapsed canonical_events platform denorm:
+       ADD teams.canonical_entity_id BIGINT NULL FK -> canonical_entities(id)
+         ON DELETE SET NULL (Pattern 84 by-analogy 3rd use; precedent-style)
+       DROP canonical_entities.ref_team_id (typed back-ref retired)
+       DROP TRIGGER trg_canonical_entity_team_backref + DROP FUNCTION
+         enforce_canonical_entity_team_backref() (Pattern 82 V2 scope-
+         narrowing in V2.47 -- canonical_markets only post-Slot-2)
+       DROP canonical_events.game_id + DROP canonical_events.series_id
+         (CL-2 denorm collapse; canonical_events no longer carries
+         platform-side dim FKs)
+     This doc reflects the post-Slot-2 FK direction (teams ->
+     canonical_entities) and the post-Slot-2 canonical_events column
+     inventory (no game_id, no series_id).
      Index names and CRUD module file name unchanged in this slot
      (deferred to a future cosmetic-cleanup slot). -->
 

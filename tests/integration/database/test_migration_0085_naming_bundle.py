@@ -106,7 +106,12 @@ def test_canonical_entity_table_absent_post_rename(db_pool: Any) -> None:
 
 @pytest.mark.parametrize(
     "expected_column",
-    ["id", "entity_kind_id", "entity_key", "display_name", "ref_team_id", "metadata", "created_at"],
+    # Pre-Migration-0086 the column inventory included ref_team_id; Slot 2
+    # (cleanup epic / session 96) DROPped that column as part of the FK
+    # direction flip.  The remaining 6 columns are the post-Slot-2 inventory
+    # and were preserved across the Slot 1 rename (the assertion this test
+    # actually pins -- rename is metadata-only).
+    ["id", "entity_kind_id", "entity_key", "display_name", "metadata", "created_at"],
 )
 def test_canonical_entities_preserves_columns_post_rename(
     db_pool: Any,
@@ -115,6 +120,10 @@ def test_canonical_entities_preserves_columns_post_rename(
     """All pre-rename ``canonical_entity`` columns survive on ``canonical_entities``.
 
     Table rename is a metadata-only operation; column inventory is unchanged.
+
+    Post-Slot-2 (Migration 0086) the ref_team_id column was DROPPED as part
+    of the FK direction flip; the parametrize list above reflects the
+    post-Slot-2 6-column inventory.
     """
     with get_cursor() as cur:
         cur.execute(

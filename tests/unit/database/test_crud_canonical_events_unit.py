@@ -65,8 +65,6 @@ def _full_row_dict(
     natural_key_hash: bytes | None = None,
     title: str = "Buffalo Bills @ Miami Dolphins, Week 1",
     description: str | None = None,
-    game_id: int | None = 42,
-    series_id: int | None = None,
     lifecycle_phase: str = "proposed",
     metadata: dict | None = None,
     created_at: datetime | None = None,
@@ -79,6 +77,10 @@ def _full_row_dict(
     emits is present, with no extras.  This is the SSOT for "what does a
     canonical_events row dict look like in tests".  Mirrors the
     ``_full_row_dict`` helper in ``test_crud_canonical_markets_unit.py``.
+
+    Migration 0086 (cleanup epic Slot 2 / session 96) DROPped game_id +
+    series_id from the column inventory; the post-Slot-2 row dict carries
+    14 keys (was 16 pre-Slot-2).
     """
     if participants_sorted is None:
         participants_sorted = [1, 2]
@@ -98,8 +100,6 @@ def _full_row_dict(
         "natural_key_hash": natural_key_hash,
         "title": title,
         "description": description,
-        "game_id": game_id,
-        "series_id": series_id,
         "lifecycle_phase": lifecycle_phase,
         "metadata": metadata,
         "created_at": created_at,
@@ -110,8 +110,9 @@ def _full_row_dict(
 
 # Migration 0085 (cleanup epic Slot 1) renamed canonical_events.domain_id
 # -> event_domain_id and canonical_events.entities_sorted ->
-# participants_sorted.  Tuple values mirror the post-rename column names
-# in the SELECT/RETURNING projections.
+# participants_sorted.  Migration 0086 (cleanup epic Slot 2) DROPped
+# game_id + series_id (CL-2 denorm collapse).  Tuple values mirror the
+# post-Slot-2 column names in the SELECT/RETURNING projections.
 _ALL_CANONICAL_EVENTS_COLUMNS = (
     "id",
     "event_domain_id",
@@ -122,8 +123,6 @@ _ALL_CANONICAL_EVENTS_COLUMNS = (
     "natural_key_hash",
     "title",
     "description",
-    "game_id",
-    "series_id",
     "lifecycle_phase",
     "metadata",
     "created_at",
@@ -165,7 +164,6 @@ class TestCreateCanonicalEvent:
             resolution_window="[2026-09-04 17:00+00, 2026-09-04 21:00+00]",
             natural_key_hash=nk,
             title="Buffalo Bills @ Miami Dolphins, Week 1",
-            game_id=42,
         )
 
         assert result == expected_row
@@ -175,12 +173,22 @@ class TestCreateCanonicalEvent:
         # Verify INSERT + RETURNING query shape.  Migration 0085 (cleanup
         # epic Slot 1) renamed canonical_events.domain_id -> event_domain_id
         # and canonical_events.entities_sorted -> participants_sorted.
+        # Migration 0086 (cleanup epic Slot 2) DROPped game_id + series_id
+        # from the column inventory.
         sql, params = mock_cursor.execute.call_args[0]
         assert "INSERT INTO canonical_events" in sql
         assert "RETURNING" in sql
         assert "event_domain_id" in sql
         assert "event_type_id" in sql
         assert "participants_sorted" in sql
+        # Post-Slot-2: game_id + series_id MUST NOT appear in the INSERT
+        assert "game_id" not in sql, (
+            "game_id retired by Migration 0086 (cleanup epic Slot 2 / "
+            "denorm collapse); SQL must not reference the dropped column"
+        )
+        assert "series_id" not in sql, (
+            "series_id retired by Migration 0086; SQL must not reference the dropped column"
+        )
         # Params order matches column order in INSERT statement
         assert params[0] == 1  # event_domain_id
         assert params[1] == 1  # event_type_id
@@ -190,10 +198,8 @@ class TestCreateCanonicalEvent:
         assert params[5] == nk  # natural_key_hash (bytes passthrough)
         assert params[6] == "Buffalo Bills @ Miami Dolphins, Week 1"  # title
         assert params[7] is None  # description
-        assert params[8] == 42  # game_id
-        assert params[9] is None  # series_id
-        assert params[10] == "proposed"  # lifecycle_phase default
-        assert params[11] is None  # metadata None -> NULL
+        assert params[8] == "proposed"  # lifecycle_phase default
+        assert params[9] is None  # metadata None -> NULL
 
     @patch("precog.database.crud_canonical_events.get_cursor")
     def test_metadata_dict_serialized_as_json(self, mock_get_cursor):
@@ -218,8 +224,9 @@ class TestCreateCanonicalEvent:
         )
 
         params = mock_cursor.execute.call_args[0][1]
-        # metadata is the 12th param (index 11)
-        json_param = params[11]
+        # metadata is the 10th param (index 9) post-Slot-2 (was index 11
+        # pre-Slot-2 with game_id + series_id occupying indices 8-9).
+        json_param = params[9]
         assert isinstance(json_param, str)
         assert json.loads(json_param) == meta
 
@@ -245,7 +252,8 @@ class TestCreateCanonicalEvent:
         )
 
         params = mock_cursor.execute.call_args[0][1]
-        assert params[11] is None  # NULL, not "null"
+        # metadata is index 9 post-Slot-2 (game_id + series_id retired)
+        assert params[9] is None  # NULL, not "null"
 
     @patch("precog.database.crud_canonical_events.get_cursor")
     def test_lifecycle_phase_default_is_proposed(self, mock_get_cursor):
@@ -268,8 +276,9 @@ class TestCreateCanonicalEvent:
         )
 
         params = mock_cursor.execute.call_args[0][1]
-        # lifecycle_phase is the 11th param (index 10)
-        assert params[10] == "proposed"
+        # lifecycle_phase is the 9th param (index 8) post-Slot-2 (was
+        # index 10 pre-Slot-2 with game_id + series_id at 8-9).
+        assert params[8] == "proposed"
 
     @patch("precog.database.crud_canonical_events.get_cursor")
     def test_lifecycle_phase_explicit_override(self, mock_get_cursor):
@@ -293,7 +302,8 @@ class TestCreateCanonicalEvent:
         )
 
         params = mock_cursor.execute.call_args[0][1]
-        assert params[10] == "matched"
+        # lifecycle_phase is index 8 post-Slot-2
+        assert params[8] == "matched"
 
     @patch("precog.database.crud_canonical_events.get_cursor")
     def test_decimal_in_metadata_preserved_via_json(self, mock_get_cursor):
@@ -327,7 +337,8 @@ class TestCreateCanonicalEvent:
         )
 
         params = mock_cursor.execute.call_args[0][1]
-        deserialized = json.loads(params[11])
+        # metadata is index 9 post-Slot-2
+        deserialized = json.loads(params[9])
         assert deserialized["settle_threshold"] == "0.5000"
 
     @patch("precog.database.crud_canonical_events.get_cursor")

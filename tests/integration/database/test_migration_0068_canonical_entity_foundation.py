@@ -38,10 +38,8 @@ Markers:
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-import psycopg2
 import pytest
 
 from precog.database.connection import get_cursor
@@ -67,7 +65,11 @@ _ENTITY_COLS: list[tuple[str, str, str, str | None]] = [
     ("entity_kind_id", "integer", "NO", None),
     ("entity_key", "text", "NO", None),
     ("display_name", "text", "NO", None),
-    ("ref_team_id", "integer", "YES", None),
+    # Migration 0086 (cleanup epic Slot 2 / session 96) DROPPED ref_team_id
+    # and flipped the FK direction (teams.canonical_entity_id replaces
+    # canonical_entities.ref_team_id).  The polymorphic enforcement trigger
+    # trg_canonical_entity_team_backref + its function are also dropped at
+    # Slot 2 (Pattern 82 V2 scope-narrowing per V2.47 / Slot 5 / session 99).
     ("metadata", "jsonb", "YES", None),
     ("created_at", "timestamp with time zone", "NO", "now()"),
 ]
@@ -141,12 +143,10 @@ _EXPECTED_PARTICIPANT_ROLES: list[tuple[str, str]] = [
 # even though their parent tables / columns have been renamed.
 _EXPECTED_INDEXES: list[tuple[str, str, bool, str | None]] = [
     ("canonical_entities", "idx_canonical_entity_entity_kind_id", False, None),
-    (
-        "canonical_entities",
-        "idx_canonical_entity_ref_team_id",
-        False,
-        "ref_team_id IS NOT NULL",
-    ),
+    # Migration 0086 (cleanup epic Slot 2) auto-dropped
+    # idx_canonical_entity_ref_team_id when DROP COLUMN ref_team_id ran;
+    # partial index on a dropped column drops with the column per PG
+    # semantic.
     (
         "canonical_participant_roles",
         "idx_canonical_participant_roles_domain_id",
@@ -309,234 +309,71 @@ def test_participant_role_fk_resolves_to_correct_domain(db_pool: Any) -> None:
 
 
 # =============================================================================
-# Group 3: CONSTRAINT TRIGGER -- polymorphic typed back-ref enforcement
+# Group 3: CONSTRAINT TRIGGER -- POST-SLOT-2 ABSENCE PIN
 #
-# This is the highest-value gap closed by this PR.  Pre-1012, the trigger's
-# *existence* was MCP-verified but its *body* was never exercised.  These
-# tests fire the trigger with each behavioral case from ADR-118 V2.38 lines
-# ~17376-17398.
+# Pre-Slot-2 (Migration 0086 / cleanup epic Slot 2 / session 96), this group
+# fired the polymorphic enforcement trigger (Pattern 82 V2 forward-direction)
+# with each behavioral case from ADR-118 V2.38 lines ~17376-17398.  Slot 2
+# DROPped the trigger + DROPped the underlying function as part of the FK
+# direction flip (CL-1: teams -> canonical_entities replaces canonical_entities
+# -> teams typed back-ref).  Pattern 82 V2 SCOPE NARROWING in V2.47 applies the
+# rule to canonical_markets only post-Slot-2; formal scope-narrowing codified
+# at V2.47 ADR amendment (Slot 5 / session 99).
+#
+# Post-Slot-2 the only meaningful assertion at the Migration 0068 boundary is
+# the trigger-and-function ABSENCE pin -- if a regression brings the trigger
+# back via a future migration, this test fails.  Slot 0086 integration tests
+# (test_migration_0086_canonical_fk_direction_flip.py) carry the orthogonal
+# assertions: FK direction = teams -> canonical_entities, ref_team_id column
+# absent, function not orphan in pg_proc, etc.
 # =============================================================================
 
 
-def _entity_kind_id(entity_kind: str) -> int:
-    """Resolve entity_kind text -> id from the seeded lookup table."""
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT id FROM canonical_entity_kinds WHERE entity_kind = %s",
-            (entity_kind,),
-        )
-        row = cur.fetchone()
-    assert row is not None, f"entity_kind {entity_kind!r} must be seeded"
-    return int(row["id"])
+def test_trg_canonical_entity_team_backref_absent_post_slot_2(db_pool: Any) -> None:
+    """``trg_canonical_entity_team_backref`` is gone post-Migration-0086.
 
-
-def _real_team_id() -> int:
-    """Return a real teams.team_id for the team-kind happy path.
-
-    The trigger only enforces ``entity_kind='team' => ref_team_id NOT NULL``;
-    the FK on ``ref_team_id REFERENCES teams(team_id)`` enforces the value
-    is a real team id.  Fetch one from the live seed.
+    Pre-Slot-2 the trigger enforced ``entity_kind='team' => ref_team_id NOT NULL``
+    via the CONSTRAINT TRIGGER pattern (Pattern 82 V2 canonical instance).
+    Slot 2 (Migration 0086) DROP TRIGGER + DROP FUNCTION + DROP COLUMN
+    ref_team_id -- the polymorphic enforcement apparatus retires.  This
+    test pins the absence so a regression that re-adds the trigger surfaces
+    at PR time.
     """
-    with get_cursor() as cur:
-        cur.execute("SELECT team_id FROM teams ORDER BY team_id LIMIT 1")
-        row = cur.fetchone()
-    assert row is not None, "teams table must have at least one seed row"
-    return int(row["team_id"])
-
-
-def test_constraint_trigger_blocks_team_kind_with_null_ref_team_id(
-    db_pool: Any,
-) -> None:
-    """INSERT entity_kind='team' + ref_team_id=NULL must raise (the trigger fires).
-
-    Behavioral spec from migration line ~282-286:
-        IF v_entity_kind = 'team' AND NEW.ref_team_id IS NULL THEN
-            RAISE EXCEPTION '...';
-        END IF;
-    """
-    team_kind_id = _entity_kind_id("team")
-    suffix = uuid.uuid4().hex[:8]
-    entity_key = f"TEST-1012-trg-block-{suffix}"
-
-    # Cleanup any residue from a prior failed run.
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "DELETE FROM canonical_entities WHERE entity_key = %s",
-            (entity_key,),
-        )
-
-    try:
-        with pytest.raises(psycopg2.errors.RaiseException):
-            with get_cursor(commit=True) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO canonical_entities
-                        (entity_kind_id, entity_key, display_name, ref_team_id)
-                    VALUES (%s, %s, %s, NULL)
-                    """,
-                    (team_kind_id, entity_key, "Test Team With NULL Backref"),
-                )
-    finally:
-        # get_cursor's __exit__ calls conn.rollback() on exception and
-        # release_connection() returns the connection to the pool. The cleanup
-        # `with get_cursor` below pulls a fresh / clean connection from the
-        # pool, so the aborted-transaction state from the RaiseException above
-        # does NOT leak into the cleanup INSERT. No explicit ROLLBACK needed.
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "DELETE FROM canonical_entities WHERE entity_key = %s",
-                (entity_key,),
-            )
-
-
-def test_constraint_trigger_allows_team_kind_with_valid_ref_team_id(
-    db_pool: Any,
-) -> None:
-    """INSERT entity_kind='team' + valid team_id must succeed (happy path)."""
-    team_kind_id = _entity_kind_id("team")
-    real_team_id = _real_team_id()
-    suffix = uuid.uuid4().hex[:8]
-    entity_key = f"TEST-1012-trg-ok-{suffix}"
-
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "DELETE FROM canonical_entities WHERE entity_key = %s",
-            (entity_key,),
-        )
-
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                """
-                INSERT INTO canonical_entities
-                    (entity_kind_id, entity_key, display_name, ref_team_id)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (team_kind_id, entity_key, "Test Team With Valid Backref", real_team_id),
-            )
-            inserted_id = cur.fetchone()["id"]
-        assert inserted_id is not None, "INSERT must return the new id on success"
-    finally:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "DELETE FROM canonical_entities WHERE entity_key = %s",
-                (entity_key,),
-            )
-
-
-def test_constraint_trigger_skips_non_team_kind_with_null_ref_team_id(
-    db_pool: Any,
-) -> None:
-    """INSERT entity_kind='fighter' + ref_team_id=NULL must succeed (trigger skip path).
-
-    Per migration line ~282: ``IF v_entity_kind = 'team'``.  The trigger
-    ONLY raises when entity_kind resolves to 'team'.  Other entity_kinds
-    pass through with NULL ref_team_id.
-    """
-    fighter_kind_id = _entity_kind_id("fighter")
-    suffix = uuid.uuid4().hex[:8]
-    entity_key = f"TEST-1012-trg-skip-{suffix}"
-
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "DELETE FROM canonical_entities WHERE entity_key = %s",
-            (entity_key,),
-        )
-
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                """
-                INSERT INTO canonical_entities
-                    (entity_kind_id, entity_key, display_name, ref_team_id)
-                VALUES (%s, %s, %s, NULL)
-                RETURNING id
-                """,
-                (fighter_kind_id, entity_key, "Test Fighter (no team back-ref)"),
-            )
-            inserted_id = cur.fetchone()["id"]
-        assert inserted_id is not None, (
-            "fighter-kind row with NULL ref_team_id must succeed (trigger skip path)"
-        )
-    finally:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "DELETE FROM canonical_entities WHERE entity_key = %s",
-                (entity_key,),
-            )
-
-
-def test_constraint_trigger_blocks_update_to_team_kind_with_null_ref_team_id(
-    db_pool: Any,
-) -> None:
-    """UPDATE entity_kind_id -> 'team' on a row with ref_team_id=NULL must raise.
-
-    The trigger fires on ``UPDATE OF entity_kind_id, ref_team_id`` per
-    migration line ~296.  Seed a fighter row (NULL ref_team_id allowed),
-    then attempt to morph it into a team row -- the trigger must block.
-    """
-    fighter_kind_id = _entity_kind_id("fighter")
-    team_kind_id = _entity_kind_id("team")
-    suffix = uuid.uuid4().hex[:8]
-    entity_key = f"TEST-1012-trg-update-{suffix}"
-
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "DELETE FROM canonical_entities WHERE entity_key = %s",
-            (entity_key,),
-        )
-
-    try:
-        # Step 1: seed a fighter row (NULL ref_team_id allowed by trigger skip).
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                """
-                INSERT INTO canonical_entities
-                    (entity_kind_id, entity_key, display_name, ref_team_id)
-                VALUES (%s, %s, %s, NULL)
-                """,
-                (fighter_kind_id, entity_key, "Test Fighter -> Team morph attempt"),
-            )
-
-        # Step 2: morph entity_kind to 'team' -- trigger must fire on UPDATE.
-        with pytest.raises(psycopg2.errors.RaiseException):
-            with get_cursor(commit=True) as cur:
-                cur.execute(
-                    """
-                    UPDATE canonical_entities
-                    SET entity_kind_id = %s
-                    WHERE entity_key = %s
-                    """,
-                    (team_kind_id, entity_key),
-                )
-    finally:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "DELETE FROM canonical_entities WHERE entity_key = %s",
-                (entity_key,),
-            )
-
-
-def test_constraint_trigger_is_deferrable_initially_immediate(db_pool: Any) -> None:
-    """The CONSTRAINT TRIGGER is DEFERRABLE INITIALLY IMMEDIATE per migration line ~297."""
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT pg_get_triggerdef(oid) AS def
+            SELECT 1
             FROM pg_trigger
             WHERE tgname = 'trg_canonical_entity_team_backref'
               AND NOT tgisinternal
             """
         )
         row = cur.fetchone()
-    assert row is not None, "trg_canonical_entity_team_backref must exist"
-    trigger_def = row["def"]
-    assert "CONSTRAINT TRIGGER" in trigger_def, (
-        f"Must be a CONSTRAINT TRIGGER (Pattern 82); got: {trigger_def}"
+    assert row is None, (
+        "trg_canonical_entity_team_backref must NOT exist post-Migration-0086 "
+        "(Slot 2: DROP TRIGGER as part of FK direction flip + Pattern 82 V2 "
+        "scope-narrowing)"
     )
-    assert "DEFERRABLE" in trigger_def, f"Must be DEFERRABLE; got: {trigger_def}"
-    assert "INITIALLY IMMEDIATE" in trigger_def, f"Must be INITIALLY IMMEDIATE; got: {trigger_def}"
+
+
+def test_enforce_canonical_entity_team_backref_function_absent_post_slot_2(
+    db_pool: Any,
+) -> None:
+    """``enforce_canonical_entity_team_backref()`` function is gone post-Migration-0086."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM pg_proc
+            WHERE proname = 'enforce_canonical_entity_team_backref'
+            """
+        )
+        row = cur.fetchone()
+    assert row is None, (
+        "enforce_canonical_entity_team_backref() function must NOT exist "
+        "post-Migration-0086 (Slot 2: DROP FUNCTION explicit -- DROP TRIGGER "
+        "alone leaves the function as orphan in pg_proc)"
+    )
 
 
 # =============================================================================

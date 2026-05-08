@@ -13,35 +13,33 @@ with sibling collection tables (``canonical_events``,
 ``crud_canonical_entity.py`` is unchanged in this slot per PM Picard
 adjudication; file rename is a separate cosmetic-cleanup concern.
 
+Cleanup epic Slot 2 (Migration 0086) reverses the FK direction between
+``teams`` and ``canonical_entities``.  Pre-Slot-2 the canonical-entity tier
+carried a ``ref_team_id`` typed back-ref into ``teams`` (the Pattern 82
+canonical instance).  Post-Slot-2 the FK lives on ``teams.canonical_entity_id``
+pointing at ``canonical_entities(id)`` ON DELETE SET NULL -- the normalized
+direction (each platform team optionally references its canonical identity).
+The pre-Slot-2 ``trg_canonical_entity_team_backref`` polymorphic enforcement
+trigger + its underlying function are dropped at Slot 2; the Pattern 82 V2
+"forward-only direction policy" rule retires for canonical_entities (see
+forward-pointer note below).  Pattern 82 V2 SCOPE NARROWING in V2.47:
+Pattern 82 V2 applies to ``canonical_markets`` only post-cleanup-epic
+Slot 2; the canonical_entities-team variant retires via Migration 0086.
+Test deletion at Slot 2 (``tests/database/test_canonical_entity_polymorphic
+_invariants.py`` removed); formal V2.40-pin retirement + Pattern 82 V2
+scope-narrowing codified at V2.47 ADR amendment (Slot 5 / session 99).
+
 Tables covered:
-    - ``canonical_entities`` (Migration 0068, renamed Migration 0085) --
-      the canonical (platform-agnostic) polymorphic entity row.
-      Discriminated by ``entity_kind_id`` -> ``canonical_entity_kinds``
-      (Pattern 81 lookup).  Polymorphic typed back-ref (``ref_team_id``
-      for entity_kind='team') is enforced via the
-      ``trg_canonical_entity_team_backref`` CONSTRAINT TRIGGER (Pattern 82
-      V2 instance).  See Migration 0068 docstring for the full DDL
-      rationale and ADR-118 V2.38/V2.40 amendment decisions.
+    - ``canonical_entities`` (Migration 0068, renamed Migration 0085, FK
+      direction flipped Migration 0086) -- the canonical (platform-agnostic)
+      polymorphic entity row.  Discriminated by ``entity_kind_id`` ->
+      ``canonical_entity_kinds`` (Pattern 81 lookup).  Post-Slot-2 column
+      shape: id + entity_kind_id + entity_key + display_name + metadata
+      + created_at (no ref_team_id; the typed back-ref retired with
+      Migration 0086).  Platform teams reference their canonical identity
+      via ``teams.canonical_entity_id`` (added Migration 0086).
     - ``canonical_entity_kinds`` (lookup, Migration 0068) -- read-only
       resolver helper ``get_canonical_entity_kind_id_by_kind()`` only.
-
-Pattern 82 V2 Forward-Only Direction Policy (CRITICAL DESIGN GUARDRAIL):
-    The DB layer (CONSTRAINT TRIGGER ``trg_canonical_entity_team_backref``)
-    enforces the polymorphic invariant ``entity_kind='team' => ref_team_id
-    NOT NULL``.  The application layer (this CRUD module) **DOES NOT
-    pre-validate** that invariant.  Pre-validation here would create a
-    second source of truth for the rule; if DB and application drifted, the
-    invariant would become ambiguous.  Instead, ``create_canonical_entity()``
-    accepts whatever args the caller passes, sends them to the INSERT, and
-    lets ``psycopg2.errors.RaiseException`` propagate from the trigger when
-    the rule is violated.  The mandatory load-bearing compensating test
-    lives at ``tests/database/test_canonical_entity_polymorphic_invariants.py``
-    (ADR-118 V2.40 pin -- MUST NOT be retired or skipped).
-
-    Reference: ``docs/guides/DEVELOPMENT_PATTERNS_V1.38.md`` Pattern 82 V2
-    "Forward-Only Direction Policy" (lines ~12239-12245) and ADR-118 V2.40
-    "Item 4. Pattern 82 V2 Forward-Only Direction Policy + mandatory
-    load-bearing regression test (#1011 item 4)" (lines ~17580-17588).
 
 Pattern 14 5-step bundle status:
     This module is **step 3 of 5** for Slice B of the Cohort 1B retro
@@ -56,7 +54,9 @@ Pattern 14 5-step bundle status:
           ``tests/integration/database/test_migration_0068_canonical_entity_foundation.py``
           (#1012, session 75) PLUS the load-bearing
           ``tests/database/test_canonical_entity_polymorphic_invariants.py``
-          (this slice) which exercises the trigger through the CRUD path.
+          (this slice).  Cleanup epic Slot 2 / Migration 0086 retires
+          this load-bearing test (deletion at Slot 2; formal pin retirement
+          codified at V2.47 / Slot 5 / session 99).
 
 UPDATE / RETIRE coverage (Slice B deliberate gap, mirrors Cohort 2 Glokta
 Finding 10 deferral):
@@ -71,13 +71,13 @@ Finding 10 deferral):
           a generic ``set_updated_at()`` BEFORE UPDATE trigger, per the
           #1018 claude-review hint), AND
         - whatever lifecycle policy is decided for the canonical-entity
-          tier (Cohort 5 / Migration 0085 seed context).
+          tier (Cohort 5 / matcher slot ~session 101 seed context).
     Until then, callers that need UPDATE coverage must NOT write ad-hoc
     UPDATE SQL (Pattern 73 violation -- drift across consumers); file an
     issue or add the helper here first.
 
 Slice B scope (this module) -- exactly these tables:
-    - ``canonical_entity`` (CRUD: create + 2 lookups);
+    - ``canonical_entities`` (CRUD: create + 2 lookups);
     - ``canonical_entity_kinds`` (read-only resolver helper);
     - NOT covered (deferred to a separate PR under #1021):
         * ``canonical_events`` -- crud_canonical_events.py
@@ -86,16 +86,21 @@ Slice B scope (this module) -- exactly these tables:
           ``canonical_event_types`` -- read-only helpers in crud_lookups.py
 
 Reference:
-    - ``docs/foundation/ARCHITECTURE_DECISIONS_V2.40.md`` lines ~17580-17590
-      (Pattern 82 V2 Forward-Only Direction Policy ratification)
-    - ``docs/guides/DEVELOPMENT_PATTERNS_V1.38.md`` Pattern 82 V2 +
-      Pattern 83 (lines ~12117-12302, ~12371)
+    - ``docs/foundation/ARCHITECTURE_DECISIONS.md`` ADR-118 V2.40 Item 4
+      (Pattern 82 V2 forward-only ratification with inline forward-pointer
+      to V2.47 retirement / Slot 5 / session 99)
+    - ``docs/guides/DEVELOPMENT_PATTERNS.md`` Pattern 82 V2 (with inline
+      forward-pointer to V2.47 scope-narrowing -- post-Slot-2 the rule
+      applies to canonical_markets only)
     - ``src/precog/database/alembic/versions/0068_canonical_entity_foundation.py``
+      (original DDL; pre-Slot-2 carried ref_team_id + trigger -- Pattern 87
+      immutable, the historical text accurately describes the schema state
+      at slot 0068's ship time)
+    - ``src/precog/database/alembic/versions/0086_canonical_fk_direction_flip.py``
+      (Slot 2 -- adds teams.canonical_entity_id, drops ref_team_id +
+      trigger + function)
     - ``src/precog/database/crud_canonical_markets.py`` (style reference --
       Cohort 2 sibling template, mirrored line-for-line)
-    - ``tests/integration/database/test_migration_0068_canonical_entity_foundation.py``
-      (#1012 trigger DDL/body coverage; this CRUD module exercises the
-      same trigger through the application boundary)
 """
 
 import json
@@ -112,36 +117,33 @@ def create_canonical_entity(
     entity_kind_id: int,
     entity_key: str,
     display_name: str,
-    ref_team_id: int | None = None,
     metadata: dict | None = None,
 ) -> dict[str, Any]:
     """
-    Create a new canonical_entity row.
+    Create a new canonical_entities row.
 
     Canonical entities are the platform-agnostic identity tier for individual
     real-world participants in canonical events (teams, fighters, candidates,
     storms, ...).  ``entity_kind_id`` is the Pattern 81 discriminator FK into
     ``canonical_entity_kinds`` (12 seeded kinds; new kinds extend by INSERT,
-    not ALTER TABLE).  ``ref_team_id`` is the Pattern 82 typed back-ref into
-    the platform-sports ``teams`` dimension -- populated when entity_kind
-    resolves to ``'team'``, NULL otherwise.
+    not ALTER TABLE).
 
-    **Pattern 82 V2 Forward-Only Direction Policy compliance:** this function
-    does NOT pre-validate the polymorphic invariant ``entity_kind='team' =>
-    ref_team_id NOT NULL``.  The CONSTRAINT TRIGGER
-    ``trg_canonical_entity_team_backref`` is the single source of truth for
-    that rule; this CRUD layer trusts the trigger and surfaces
-    ``psycopg2.errors.RaiseException`` to callers when the rule is violated.
-    Pre-validation here would duplicate the rule (Pattern 73 violation) and
-    create ambiguity if DB and application drifted.
+    Cleanup epic Slot 2 (Migration 0086) flipped the FK direction between
+    ``teams`` and ``canonical_entities``.  Pre-Slot-2 this function accepted
+    a ``ref_team_id`` typed back-ref parameter; post-Slot-2 the platform
+    team references its canonical identity via ``teams.canonical_entity_id``
+    (added Migration 0086) and this function no longer carries the
+    ref_team_id parameter.  The pre-Slot-2 polymorphic enforcement trigger
+    ``trg_canonical_entity_team_backref`` is dropped at Slot 2; Pattern 82
+    V2 forward-only direction policy retires for canonical_entities (formal
+    scope-narrowing codified at V2.47 ADR amendment / Slot 5 / session 99).
 
     Args:
         entity_kind_id: Integer FK into ``canonical_entity_kinds.id``.
-            Resolves at INSERT time inside the trigger via lookup on
-            ``canonical_entity_kinds.entity_kind`` text.  Use
-            ``get_canonical_entity_kind_id_by_kind()`` to resolve from the
-            human-readable kind string ('team', 'fighter', ...).  ON DELETE
-            RESTRICT on the FK -- entity_kinds outlive any single entity row.
+            Use ``get_canonical_entity_kind_id_by_kind()`` to resolve from
+            the human-readable kind string ('team', 'fighter', ...).  ON
+            DELETE RESTRICT on the FK -- entity_kinds outlive any single
+            entity row.
         entity_key: Stable business identifier for the entity within its
             kind (e.g., the team external_id, the fighter slug).
             Composite UNIQUE with ``entity_kind_id`` via
@@ -149,68 +151,35 @@ def create_canonical_entity(
             raise ``psycopg2.IntegrityError``.
         display_name: Human-readable display label (e.g., "Buffalo Bills",
             "Conor McGregor").  NOT NULL.
-        ref_team_id: Optional FK into platform-sports ``teams.team_id``.
-            **Required when entity_kind='team'** (CONSTRAINT TRIGGER raises
-            ``psycopg2.errors.RaiseException`` otherwise).  Must be NULL or
-            valid -- a non-NULL value referencing a non-existent
-            teams.team_id raises ``psycopg2.IntegrityError`` (FK with ON
-            DELETE RESTRICT).  May be safely NULL for non-team entity_kinds
-            (the trigger skips non-team rows -- Pattern 82 V2 forward-only).
         metadata: Optional JSONB dict.  Serialized via ``json.dumps``
             (mirrors the ``crud_canonical_markets.create_canonical_market``
             and ``crud_events.create_event`` metadata convention).
 
     Returns:
         Full row dict of the created canonical entity.  Keys:
-            id, entity_kind_id, entity_key, display_name, ref_team_id,
-            metadata, created_at
+            id, entity_kind_id, entity_key, display_name, metadata, created_at
 
     Raises:
-        psycopg2.errors.RaiseException: If the CONSTRAINT TRIGGER
-            ``trg_canonical_entity_team_backref`` fires -- specifically when
-            ``entity_kind`` resolves to ``'team'`` and ``ref_team_id`` is
-            NULL.  Pattern 82 V2 forward-only: this is the canonical
-            failure mode; callers MUST NOT pre-validate to avoid this
-            (Pattern 73 SSOT compliance).
         psycopg2.IntegrityError: If ``(entity_kind_id, entity_key)`` already
-            exists (UNIQUE violation), ``entity_kind_id`` does not reference
-            a real ``canonical_entity_kinds`` row, or non-NULL
-            ``ref_team_id`` does not reference a real ``teams.team_id``.
+            exists (UNIQUE violation), or ``entity_kind_id`` does not
+            reference a real ``canonical_entity_kinds`` row.
 
     Example:
         >>> # Resolve the entity_kind_id once and reuse:
         >>> team_kind_id = get_canonical_entity_kind_id_by_kind("team")
-        >>> # Create a team entity with the required typed back-ref:
+        >>> # Create a team entity:
         >>> row = create_canonical_entity(
         ...     entity_kind_id=team_kind_id,
         ...     entity_key="BUF-NFL-001",
         ...     display_name="Buffalo Bills",
-        ...     ref_team_id=1,  # teams.team_id
         ... )
         >>> row["id"]  # BIGSERIAL surrogate PK
         7
-
-    Example (non-team entity_kind, NULL ref_team_id permitted):
-        >>> fighter_kind_id = get_canonical_entity_kind_id_by_kind("fighter")
-        >>> row = create_canonical_entity(
-        ...     entity_kind_id=fighter_kind_id,
-        ...     entity_key="MCGREGOR-CONOR",
-        ...     display_name="Conor McGregor",
-        ...     ref_team_id=None,  # OK -- trigger skips non-team kinds
-        ... )
+        >>> # Platform team references its canonical identity via
+        >>> # teams.canonical_entity_id = row["id"] (Cohort 5+ matcher
+        >>> # slot ~session 101 wires this).
 
     Educational Note:
-        ``canonical_entity`` is the polymorphic identity tier in the
-        canonical hierarchy.  Per ADR-118 V2.38 decision #5, ``ref_team_id``
-        is the FIRST typed back-ref column; future kinds will accumulate
-        their own typed back-ref columns (e.g., ``ref_fighter_id``,
-        ``ref_candidate_id``, ``ref_storm_id``) each with their own
-        Pattern 82 V2 CONSTRAINT TRIGGER off the same template.  Adding a
-        new typed back-ref means: (a) ALTER TABLE ADD COLUMN, (b) write
-        a sibling enforcement function + CONSTRAINT TRIGGER, (c) ship a
-        load-bearing regression test in ``tests/database/`` per Pattern 82
-        V2's mandatory compensating mechanism.
-
         Why no ``updated_at`` / ``retired_at`` column?  Per ADR-118 V2.38
         the canonical-entity tier was scoped to identity-creation only in
         Cohort 1B; lifecycle surfaces (UPDATE / RETIRE) defer to a future
@@ -219,26 +188,27 @@ def create_canonical_entity(
         CRUD module exposes INSERT only.
 
     Reference:
-        - ``docs/foundation/ARCHITECTURE_DECISIONS_V2.40.md`` lines
-          ~17580-17590 (Pattern 82 V2 Forward-Only Direction Policy)
-        - ``docs/guides/DEVELOPMENT_PATTERNS_V1.38.md`` Pattern 82 V2
-        - Migration 0068 (table DDL + CONSTRAINT TRIGGER)
-        - ADR-118 V2.38 decisions #1, #5; V2.40 amendment Item 4
+        - Migration 0068 (table DDL; pre-Slot-2 shape with ref_team_id)
+        - Migration 0085 (cleanup epic Slot 1: canonical_entity ->
+          canonical_entities table rename)
+        - Migration 0086 (cleanup epic Slot 2: FK direction flip + DROP
+          ref_team_id column + DROP polymorphic enforcement trigger)
+        - ADR-118 V2.38 decisions #1, #5; V2.40 amendment Item 4 (with
+          inline forward-pointer to V2.47 retirement at Slot 5 / session 99)
     """
     query = """
         INSERT INTO canonical_entities (
-            entity_kind_id, entity_key, display_name, ref_team_id, metadata
+            entity_kind_id, entity_key, display_name, metadata
         )
-        VALUES (%s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s)
         RETURNING id, entity_kind_id, entity_key, display_name,
-                  ref_team_id, metadata, created_at
+                  metadata, created_at
     """
 
     params = (
         entity_kind_id,
         entity_key,
         display_name,
-        ref_team_id,
         json.dumps(metadata) if metadata is not None else None,
     )
 
@@ -257,14 +227,12 @@ def get_canonical_entity_by_id(canonical_entity_id: int) -> dict[str, Any] | Non
 
     Returns:
         Full row dict if found, ``None`` otherwise.  Keys:
-            id, entity_kind_id, entity_key, display_name, ref_team_id,
-            metadata, created_at
+            id, entity_kind_id, entity_key, display_name, metadata, created_at
 
     Example:
         >>> row = get_canonical_entity_by_id(7)
         >>> if row:
         ...     print(row["display_name"])  # 'Buffalo Bills'
-        ...     print(row["ref_team_id"])   # 1 (or None for non-team kinds)
 
     Educational Note:
         Lookup by surrogate PK is the cheapest path (single B-tree probe on
@@ -274,11 +242,13 @@ def get_canonical_entity_by_id(canonical_entity_id: int) -> dict[str, Any] | Non
 
     Reference:
         - Migration 0068 (table DDL)
+        - Migration 0086 (FK direction flip + denorm collapse; ref_team_id
+          dropped from column inventory)
         - ``crud_canonical_markets.get_canonical_market_by_id`` (sibling
           lookup-by-PK pattern)
     """
     query = """
-        SELECT id, entity_kind_id, entity_key, display_name, ref_team_id,
+        SELECT id, entity_kind_id, entity_key, display_name,
                metadata, created_at
         FROM canonical_entities
         WHERE id = %s
@@ -334,10 +304,11 @@ def get_canonical_entity_by_kind_and_key(
 
     Reference:
         - Migration 0068 (table DDL -- ``uq_canonical_entity_kind_key``)
+        - Migration 0086 (FK direction flip + denorm collapse)
         - ADR-118 V2.38 decision #1 (composite natural identity)
     """
     query = """
-        SELECT id, entity_kind_id, entity_key, display_name, ref_team_id,
+        SELECT id, entity_kind_id, entity_key, display_name,
                metadata, created_at
         FROM canonical_entities
         WHERE entity_kind_id = %s AND entity_key = %s
@@ -357,7 +328,7 @@ def get_canonical_entity_kind_id_by_kind(entity_kind: str) -> int | None:
     The 12 seeded entity_kinds (team, fighter, candidate, storm, company,
     location, person, product, country, organization, commodity, media) are
     Pattern 81 instances (open canonical enum -> lookup table).  Callers
-    constructing canonical_entity rows MUST resolve the human-readable kind
+    constructing canonical_entities rows MUST resolve the human-readable kind
     string to its integer FK before INSERT; this helper centralizes that
     resolution to avoid hardcoded integer literals across consumers
     (Pattern 73 SSOT).
@@ -378,7 +349,6 @@ def get_canonical_entity_kind_id_by_kind(entity_kind: str) -> int | None:
         ...     entity_kind_id=team_kind_id,
         ...     entity_key="BUF-NFL-001",
         ...     display_name="Buffalo Bills",
-        ...     ref_team_id=1,
         ... )
 
     Educational Note:
@@ -396,7 +366,7 @@ def get_canonical_entity_kind_id_by_kind(entity_kind: str) -> int | None:
     Reference:
         - Migration 0068 (canonical_entity_kinds DDL + 12-row seed)
         - ADR-118 V2.38 decision #1 (Pattern 81 lookup table for entity_kinds)
-        - DEVELOPMENT_PATTERNS V1.37 Pattern 81
+        - DEVELOPMENT_PATTERNS Pattern 81
     """
     query = """
         SELECT id

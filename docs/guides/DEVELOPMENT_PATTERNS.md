@@ -12270,6 +12270,8 @@ All Pattern 82 triggers MUST encode only the **forward direction**: when the dis
 
 **Mandatory compensating mechanism:** every Pattern 82 application MUST be paired with a regression test that asserts no row carries a `ref_*_id` for a non-matching discriminator value. The test is **load-bearing** — it MUST NOT be skipped, retired, or admitted to any audit bypass set. For the canonical_entity instance, the test lives at `tests/database/test_canonical_entity_polymorphic_invariants.py` (folded into #1021 scope).
 
+> **SCOPE NARROWING in V2.47:** Pattern 82 V2 applies to canonical_markets only post-cleanup-epic Slot 2. The canonical_entities-team variant retires via Migration 0086 (Slot 2 / session 96) — the FK direction is flipped (teams → canonical_entities, not canonical_entities → teams), the polymorphic enforcement trigger `trg_canonical_entity_team_backref` is dropped, and the typed back-ref column `canonical_entities.ref_team_id` is removed. Test deletion at Slot 2 (`tests/database/test_canonical_entity_polymorphic_invariants.py` deleted); formal scope-narrowing codified at V2.47 ADR amendment (Slot 5 / session 99). The "Concrete Instances" table below reflects the pre-Slot-2 state and will be revised at V2.47.
+
 **Why one-direction-only AND why mandatory test:** without the load-bearing regression test, future cohorts copy-paste the trigger pattern verbatim and create an N×N matrix of silent overload paths where each trigger says "I don't apply to your kind" and a malformed row passes all of them. The test is the load-bearing compensating mechanism. (See `memory/design_review_1011_joechip_memo.md` § Item 4 STRONGEST CONCERN for the full decay-vector analysis.)
 
 ### When to Use
