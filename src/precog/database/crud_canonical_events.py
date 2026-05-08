@@ -99,6 +99,34 @@ epic Slot 2 / session 96):
     direction reads ``games.canonical_event_id`` / ``series.canonical_event_id``
     directly (slot 0080 + future slots).
 
+Note on ``superseded_by`` + retirement cascade (NET-NEW in Migration 0087 --
+cleanup epic Slot 3 / session 97):
+    Migration 0087 ADDs ``canonical_events.superseded_by BIGINT NULL`` with
+    a self-referencing FK -> ``canonical_events(id)`` ON DELETE SET NULL,
+    plus a CHECK constraint blocking id->id self-cycles.  Coordinated with
+    the existing ``retired_at`` column to encode three states:
+
+        Active row:                  superseded_by IS NULL AND retired_at IS NULL
+        Retired without replacement: superseded_by IS NULL AND retired_at IS NOT NULL
+                                     (terminal tombstone)
+        Superseded (replaced):       superseded_by = <new_id> AND retired_at IS NOT NULL
+
+    The SSOT helper ``get_active_canonical_event(id)`` (introduced this
+    slot) walks the chain forward via recursive CTE and returns the
+    terminal-active row OR None if the chain terminates at a tombstone.
+    This is the canonical entry point for active-row resolution post-
+    Slot-3; forward callers (Cohort 5+ matcher slot, future strategy /
+    model code) use the helper, not inline WHERE clauses against
+    ``superseded_by`` or ``retired_at``.
+
+    ``retire_canonical_event`` extends this slot to optionally accept a
+    ``superseded_by_id`` kwarg.  When set, the function (a) validates the
+    chain from ``superseded_by_id`` does not lead back to the canonical
+    event being retired (Pattern 73 SSOT cycle prevention -- one write
+    surface = one validation point); (b) sets BOTH ``retired_at`` AND
+    ``superseded_by`` in a single atomic UPDATE.  When unset, the existing
+    terminal-tombstone semantics are preserved (backward compat).
+
 Slice C scope (this module) -- exactly these tables:
     - ``canonical_events`` (CRUD: create + 2 lookups + retire);
     - ``canonical_event_domains`` (read-only resolver helper);
@@ -206,11 +234,14 @@ def create_canonical_event(
             convention).
 
     Returns:
-        Full row dict of the created canonical event.  Keys:
+        Full row dict of the created canonical event.  Keys (post-
+        Migration-0087, 15 keys; ``superseded_by`` is NULL for newly-
+        created rows -- it is set by ``retire_canonical_event(id,
+        superseded_by_id=...)`` when an existing row is superseded):
             id, event_domain_id, event_type_id, participants_sorted,
             resolution_window, resolution_rule_fp, natural_key_hash, title,
             description, lifecycle_phase, metadata, created_at, updated_at,
-            retired_at
+            retired_at, superseded_by
 
     Raises:
         psycopg2.IntegrityError: If ``natural_key_hash`` already exists,
@@ -279,7 +310,7 @@ def create_canonical_event(
         RETURNING id, event_domain_id, event_type_id, participants_sorted,
                   resolution_window, resolution_rule_fp, natural_key_hash,
                   title, description, lifecycle_phase, metadata,
-                  created_at, updated_at, retired_at
+                  created_at, updated_at, retired_at, superseded_by
     """
 
     params = (
@@ -309,16 +340,21 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
         canonical_event_id: BIGSERIAL surrogate PK from ``canonical_events.id``.
 
     Returns:
-        Full row dict if found, ``None`` otherwise.  Keys:
+        Full row dict if found, ``None`` otherwise.  Keys (post-
+        Migration-0087, 15 keys):
             id, event_domain_id, event_type_id, participants_sorted,
             resolution_window, resolution_rule_fp, natural_key_hash, title,
             description, lifecycle_phase, metadata,
-            created_at, updated_at, retired_at
+            created_at, updated_at, retired_at, superseded_by
 
         Migration 0086 (cleanup epic Slot 2 / session 96) DROPped
         ``game_id`` / ``series_id`` from the column inventory; callers
         needing the platform-row -> canonical-event direction read
         ``games.canonical_event_id`` directly (slot 0080).
+        Migration 0087 (cleanup epic Slot 3 / session 97) ADDed
+        ``superseded_by`` to encode the retirement-supersession chain;
+        for active-row resolution use ``get_active_canonical_event(id)``
+        rather than this low-level lookup.
 
     Example:
         >>> row = get_canonical_event_by_id(7)
@@ -333,8 +369,18 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
         matching), use ``get_canonical_event_by_natural_key_hash()`` which
         hits the ``uq_canonical_events_nk`` UNIQUE index.
 
+        For ACTIVE-row resolution (post-Migration-0087, cleanup epic Slot 3),
+        use ``get_active_canonical_event(id)`` instead -- it walks the
+        ``superseded_by`` retirement chain forward and returns the terminal-
+        active row (or None for tombstones).  This low-level helper returns
+        the row at the given id verbatim; if you wanted the active head of
+        a retired row's chain, you want ``get_active_canonical_event``.
+
     Reference:
         - Migration 0067 (table DDL)
+        - Migration 0087 (cleanup epic Slot 3 -- adds superseded_by + the
+          ``get_active_canonical_event`` SSOT helper that supersedes this
+          function for active-row semantics)
         - ``crud_canonical_markets.get_canonical_market_by_id`` (sibling
           lookup-by-PK pattern)
     """
@@ -342,7 +388,7 @@ def get_canonical_event_by_id(canonical_event_id: int) -> dict[str, Any] | None:
         SELECT id, event_domain_id, event_type_id, participants_sorted,
                resolution_window, resolution_rule_fp, natural_key_hash,
                title, description, lifecycle_phase,
-               metadata, created_at, updated_at, retired_at
+               metadata, created_at, updated_at, retired_at, superseded_by
         FROM canonical_events
         WHERE id = %s
     """
@@ -370,7 +416,8 @@ def get_canonical_event_by_natural_key_hash(
     Returns:
         Full row dict if found, ``None`` otherwise.  Same keys as
         ``get_canonical_event_by_id``.  Post-Migration-0086 (cleanup epic
-        Slot 2) the column inventory excludes ``game_id`` / ``series_id``.
+        Slot 2) the column inventory excludes ``game_id`` / ``series_id``;
+        post-Migration-0087 (cleanup epic Slot 3) adds ``superseded_by``.
 
     Example:
         >>> import hashlib
@@ -393,8 +440,18 @@ def get_canonical_event_by_natural_key_hash(
         a thin lookup that does not validate the hash shape or
         derivation -- that is the matching layer's responsibility.
 
+        For ACTIVE-row resolution after a hit (post-Migration-0087, cleanup
+        epic Slot 3), feed the returned row's ``id`` into
+        ``get_active_canonical_event(id)`` to walk the ``superseded_by``
+        retirement chain forward.  This function returns the verbatim row
+        at the natural-key-hash match, which may itself be a retired or
+        superseded row -- the matcher pipeline (Cohort 5+) is the natural
+        consumer for the active-row resolution.
+
     Reference:
         - Migration 0067 (table DDL -- ``uq_canonical_events_nk``)
+        - Migration 0087 (cleanup epic Slot 3 -- adds superseded_by + the
+          ``get_active_canonical_event`` SSOT helper)
         - ADR-118 V2.38 "natural_key_hash derivation rule (deferral note)"
         - Future: ``src/precog/matching/`` (Cohort 5)
     """
@@ -402,36 +459,287 @@ def get_canonical_event_by_natural_key_hash(
         SELECT id, event_domain_id, event_type_id, participants_sorted,
                resolution_window, resolution_rule_fp, natural_key_hash,
                title, description, lifecycle_phase,
-               metadata, created_at, updated_at, retired_at
+               metadata, created_at, updated_at, retired_at, superseded_by
         FROM canonical_events
         WHERE natural_key_hash = %s
     """
     return fetch_one(query, (natural_key_hash,))
 
 
-def retire_canonical_event(canonical_event_id: int) -> bool:
+def get_active_canonical_event(canonical_event_id: int) -> dict[str, Any] | None:
     """
-    Retire a canonical_events row by setting ``retired_at = now()``.
+    Resolve the terminal-active row of a canonical_events retirement chain.
 
-    Canonical-tier retirement is the only canonical-tier lifecycle surface
-    on ``canonical_events``: this is for cases where the canonical identity
+    Walks the ``superseded_by`` chain forward starting from
+    ``canonical_event_id``.  Returns the terminal-active row, where
+    "active" is defined by the schema-coordinated invariant:
+    ``superseded_by IS NULL AND retired_at IS NULL``.  Returns None for:
+
+        - A row that does not exist (start id missing).
+        - A retirement chain whose terminal row is a tombstone (retired
+          without replacement: ``superseded_by IS NULL AND retired_at IS
+          NOT NULL``) -- per Q1 user adjudication.
+
+    This is the canonical entry point for active-row resolution post-
+    Migration-0087.  Forward callers (Cohort 5+ matcher slot, future
+    strategy / model code) should use this helper rather than inline
+    WHERE clauses against ``superseded_by`` or ``retired_at`` (Pattern 73
+    SSOT discipline -- one helper, one chain-walk semantics).
+
+    Args:
+        canonical_event_id: BIGSERIAL surrogate PK from
+            ``canonical_events.id``.  May reference an active row, a
+            superseded row, a tombstone, or a non-existent id; the helper
+            handles all four uniformly.
+
+    Returns:
+        Full row dict for the terminal-active row of the chain starting
+        at ``canonical_event_id``, OR ``None`` if:
+            - the start id does not exist; OR
+            - the chain terminates at a tombstone (Q1 boundary).
+
+        Row dict keys (post-Migration-0087, 15 keys -- same projection as
+        ``get_canonical_event_by_id``):
+            id, event_domain_id, event_type_id, participants_sorted,
+            resolution_window, resolution_rule_fp, natural_key_hash, title,
+            description, lifecycle_phase, metadata,
+            created_at, updated_at, retired_at, superseded_by
+
+    Raises:
+        RuntimeError: If the chain exceeds 100 hops -- defensive guard
+            against multi-row cycles that escaped the application-layer
+            validation in ``retire_canonical_event(superseded_by_id=...)``
+            (e.g., direct SQL writes bypassing the SSOT entry point).
+            Per Q2 user adjudication 3-layer defense: layer (c).
+
+    Example:
+        >>> # Chain: id1 -> id2 -> id3 (id3 active, id1+id2 superseded).
+        >>> # Caller passes id1; helper walks chain and returns id3's row.
+        >>> active = get_active_canonical_event(1)
+        >>> if active is None:
+        ...     print("Canonical id 1's chain terminates at a tombstone OR id missing")
+        ... else:
+        ...     print(f"Active head of id 1's chain is id {active['id']}")
+
+    Educational Note:
+        The helper uses a recursive CTE with an explicit ``hops < 100``
+        clause for cycle protection.  At application-layer validation
+        (``retire_canonical_event(superseded_by_id=...)``) plus the
+        DB-level single-row CHECK constraint
+        ``canonical_events_no_self_supersession``, the only way a cycle
+        can be introduced is via direct SQL bypassing the helper -- this
+        100-hop guard is the runtime safety net for that escape path.
+
+        Returning None for terminal tombstones (rather than the tombstone
+        row itself) reflects the helper's contract: it answers "what is
+        the active head", not "what is the most-recent state of this
+        chain".  Callers needing the tombstone row can fall through to
+        ``get_canonical_event_by_id()`` after the helper returns None.
+
+        Multi-row chains are conceptually rare in production; the typical
+        retirement path is a single supersession (``id1 -> id2``, where
+        id2 is active) or a tombstone (``id1 -> NULL``, retired without
+        replacement).  Long chains arise only in unusual operator-driven
+        re-supersession sequences.
+
+    Reference:
+        - Migration 0087 (cleanup epic Slot 3 -- adds superseded_by self-FK
+          + the canonical_events_no_self_supersession single-row CHECK)
+        - ``retire_canonical_event(canonical_event_id, superseded_by_id=...)``
+          (write-side SSOT; layer (b) of the 3-layer cycle defense)
+        - ``memory/build_spec_slot_3_retirement_cascade_pm_memo.md`` § 0
+          P91 catch #3 (3-layer cycle prevention rationale)
+    """
+    query = """
+        WITH RECURSIVE chain AS (
+            SELECT id, superseded_by, retired_at, 0 AS hops
+              FROM canonical_events
+             WHERE id = %s
+            UNION ALL
+            SELECT ce.id, ce.superseded_by, ce.retired_at, c.hops + 1
+              FROM canonical_events ce
+              JOIN chain c ON ce.id = c.superseded_by
+             WHERE c.hops < 100
+        )
+        SELECT MAX(hops) AS max_hops
+          FROM chain
+    """
+    # First pass: detect cycle via depth-bound saturation.  If max_hops
+    # reaches 100, the chain either is exactly 100 deep (operationally
+    # impossible without active operator-driven re-supersession) or is
+    # cyclic (the recursive CTE re-enters the same row but the depth
+    # bound prevents runaway).  Either way the helper raises -- 100 hops
+    # is a data-quality flag.
+    with get_cursor() as cur:
+        cur.execute(query, (canonical_event_id,))
+        depth_row = cur.fetchone()
+    if (
+        depth_row is not None
+        and depth_row.get("max_hops") is not None
+        and depth_row["max_hops"] >= 100
+    ):
+        raise RuntimeError(
+            f"get_active_canonical_event: chain exceeds 100 hops, "
+            f"suspected cycle starting from id={canonical_event_id}"
+        )
+
+    # Second pass: walk to terminal-active row (superseded_by IS NULL AND
+    # retired_at IS NULL).  Returns None for tombstones (terminal with
+    # retired_at IS NOT NULL) per Q1 boundary, AND for missing start ids
+    # (recursive CTE returns zero rows, MAX(hops) is None above and we
+    # fall through to here).
+    active_query = """
+        WITH RECURSIVE chain AS (
+            SELECT id, superseded_by, retired_at, 0 AS hops
+              FROM canonical_events
+             WHERE id = %s
+            UNION ALL
+            SELECT ce.id, ce.superseded_by, ce.retired_at, c.hops + 1
+              FROM canonical_events ce
+              JOIN chain c ON ce.id = c.superseded_by
+             WHERE c.hops < 100
+        )
+        SELECT ce.id, ce.event_domain_id, ce.event_type_id,
+               ce.participants_sorted, ce.resolution_window,
+               ce.resolution_rule_fp, ce.natural_key_hash, ce.title,
+               ce.description, ce.lifecycle_phase, ce.metadata,
+               ce.created_at, ce.updated_at, ce.retired_at,
+               ce.superseded_by
+          FROM canonical_events ce
+          JOIN chain c ON ce.id = c.id
+         WHERE c.superseded_by IS NULL
+           AND c.retired_at IS NULL
+         LIMIT 1
+    """
+    return fetch_one(active_query, (canonical_event_id,))
+
+
+def _retirement_chain_includes(start_id: int, target_id: int) -> bool:
+    """
+    Internal helper: does the superseded_by chain starting at ``start_id``
+    include ``target_id`` anywhere?
+
+    Layer (b) of the 3-layer cycle defense (per Q2 adjudication; see
+    ``get_active_canonical_event`` docstring).  Used by
+    ``retire_canonical_event(superseded_by_id=...)`` BEFORE writing the
+    new supersession link, to verify that linking ``superseded_by_id``
+    into the chain headed by ``target_id`` (the row being retired) does
+    NOT introduce a cycle.
+
+    Defensive: capped at 100 hops to mirror
+    ``get_active_canonical_event``'s read-side guard; if the chain
+    exceeds 100 hops the helper conservatively returns ``True`` (treats
+    deep chains as suspect cycle indicators), causing the calling
+    ``retire_canonical_event`` to reject the write with ValueError.
+    Production chains are not 100 deep; this is a safety boundary, not a
+    legitimate path.
+
+    Pattern 73 SSOT: the recursive-CTE chain-walk SQL is encapsulated
+    here (and in ``get_active_canonical_event`` -- the two helpers are
+    siblings sharing the chain-walk idiom).  No external caller writes
+    inline ``superseded_by`` traversal SQL.
+
+    Args:
+        start_id: id whose chain to walk forward via ``superseded_by``.
+        target_id: id to search for in the walked chain.
+
+    Returns:
+        ``True`` if ``target_id`` appears anywhere in the chain starting
+        at ``start_id`` (including ``start_id`` itself), OR if the chain
+        exceeds 100 hops (defensive cycle-suspect treatment).
+        ``False`` if the chain terminates within 100 hops without
+        encountering ``target_id``.
+    """
+    query = """
+        WITH RECURSIVE chain AS (
+            SELECT id, superseded_by, 0 AS hops
+              FROM canonical_events
+             WHERE id = %s
+            UNION ALL
+            SELECT ce.id, ce.superseded_by, c.hops + 1
+              FROM canonical_events ce
+              JOIN chain c ON ce.id = c.superseded_by
+             WHERE c.hops < 100
+        )
+        SELECT
+            BOOL_OR(id = %s) AS includes_target,
+            MAX(hops) AS max_hops
+          FROM chain
+    """
+    with get_cursor() as cur:
+        cur.execute(query, (start_id, target_id))
+        row = cur.fetchone()
+    if row is None:
+        # Start id does not exist -- chain is empty; cannot include target.
+        return False
+    if row.get("max_hops") is not None and row["max_hops"] >= 100:
+        # Defensive: chain depth saturated -- treat as suspect cycle.
+        return True
+    return bool(row.get("includes_target"))
+
+
+def retire_canonical_event(
+    canonical_event_id: int,
+    superseded_by_id: int | None = None,
+) -> bool:
+    """
+    Retire a canonical_events row.
+
+    Without ``superseded_by_id``: sets ``retired_at = now()`` only --
+    terminal tombstone (retired without replacement).  Backward-compatible
+    with the pre-Migration-0087 signature.
+
+    With ``superseded_by_id``: validates that linking ``superseded_by_id``
+    into the chain does NOT introduce a cycle (layer (b) of the 3-layer
+    cycle defense per Q2 adjudication), then writes BOTH ``retired_at =
+    now()`` AND ``superseded_by = :superseded_by_id`` in a SINGLE atomic
+    UPDATE.  This is the canonical write surface for "this canonical row
+    is being replaced by that one".
+
+    Canonical-tier retirement is for cases where the canonical identity
     itself is deprecated (e.g., this row duplicates an existing canonical
     event and should not be returned by future lookups).  It does NOT track
     per-platform tradability (that's platform ``markets.status``) nor event-
     matching state (that's ``canonical_events.lifecycle_phase``).
 
     Args:
-        canonical_event_id: BIGSERIAL surrogate PK from ``canonical_events.id``.
+        canonical_event_id: BIGSERIAL surrogate PK from
+            ``canonical_events.id`` -- the row to retire.
+        superseded_by_id: Optional BIGSERIAL surrogate PK from
+            ``canonical_events.id`` -- the row that supersedes this one.
+            When provided, the function validates that the chain from
+            ``superseded_by_id`` does NOT lead back to
+            ``canonical_event_id`` (cycle prevention) and writes both
+            columns atomically.  When None (default), the function
+            preserves backward-compatible terminal-tombstone semantics.
 
     Returns:
         ``True`` if a row was retired (matched and updated), ``False`` if no
         row matched the given id.
 
+    Raises:
+        ValueError: If ``superseded_by_id`` is provided AND its chain
+            leads back to ``canonical_event_id`` (cycle introduction
+            blocked).  No row is updated when this fires; database state
+            is unchanged.  Pattern 73 SSOT cycle prevention -- one write
+            surface = one validation point.
+
     Example:
+        >>> # Pre-Migration-0087 callstyle (still supported):
         >>> if retire_canonical_event(7):
-        ...     print("Canonical event 7 retired")
-        ... else:
-        ...     print("Canonical event 7 not found")
+        ...     print("Canonical event 7 retired (terminal tombstone)")
+        ...
+        >>> # Post-Migration-0087: retire-and-supersede:
+        >>> if retire_canonical_event(7, superseded_by_id=42):
+        ...     print("Canonical event 7 retired, superseded by 42")
+        ...
+        >>> # Cycle introduction is rejected:
+        >>> # Suppose 42 -> 7 already (42 was previously retired into 7).
+        >>> # Then retire(7, superseded_by_id=42) would create cycle 7 -> 42 -> 7.
+        >>> try:
+        ...     retire_canonical_event(7, superseded_by_id=42)
+        ... except ValueError as e:
+        ...     print(f"Cycle rejected: {e}")
 
     Educational Note:
         ``retired_at`` follows the append-then-retire model used elsewhere in
@@ -445,30 +753,78 @@ def retire_canonical_event(canonical_event_id: int) -> bool:
         ``canonical_events`` carries the ``trg_canonical_events_updated_at``
         BEFORE UPDATE trigger (shipped in Migration 0076 -- generic
         ``set_updated_at()`` retrofit per ADR-118 V2.42 sub-amendment A).
-        This function therefore writes ``retired_at = now()`` ONLY;
-        ``updated_at`` refreshes automatically via the trigger.  Pattern 73
-        SSOT compliance: the trigger is the canonical source for
-        ``updated_at`` semantics; this module relies on it.
+        This function therefore writes ``retired_at = now()`` (and
+        optionally ``superseded_by``) ONLY; ``updated_at`` refreshes
+        automatically via the trigger.  Pattern 73 SSOT compliance: the
+        trigger is the canonical source for ``updated_at`` semantics;
+        this module relies on it.
 
-        This function is idempotent in effect: retiring an already-retired
-        row simply refreshes ``retired_at`` to the current timestamp.  If
-        callers need "retire only if not already retired" semantics, they
-        should fetch the row first and check ``retired_at IS NULL``.
+        Atomicity: the ``superseded_by_id`` extension writes BOTH columns
+        in a SINGLE UPDATE statement (NOT two separate UPDATEs).  This
+        matters because the schema invariant "superseded rows have
+        retired_at set" must hold at every moment, including the moment
+        between two hypothetical separate UPDATEs.  An external observer
+        reading the row mid-transaction would see either the pre-
+        retirement state (both NULL) or the post-retirement state (both
+        set) -- never the half-state (only one set).
+
+        This function is idempotent in effect for the unsuperseded path:
+        retiring an already-retired row simply refreshes ``retired_at``
+        to the current timestamp.  For the superseded path the same
+        idempotency applies, AND the cycle check is conservative on
+        re-retirement (re-supersession to the same superseded_by_id is
+        idempotent; re-supersession to a different id that would create
+        a cycle is rejected).
 
     Reference:
         - Migration 0067 (table DDL)
         - Migration 0076 (generic ``set_updated_at()`` BEFORE UPDATE
           trigger retrofit per ADR-118 V2.42 sub-amendment A)
+        - Migration 0087 (cleanup epic Slot 3 -- adds superseded_by self-FK
+          + canonical_events_no_self_supersession single-row CHECK)
+        - ``get_active_canonical_event`` (read-side SSOT; layer (c) of
+          the 3-layer cycle defense)
+        - ``_retirement_chain_includes`` (write-side cycle check helper;
+          layer (b))
         - ``crud_canonical_markets.retire_canonical_market`` (sibling
           retire-tier pattern)
     """
-    query = """
-        UPDATE canonical_events
-        SET retired_at = now()
-        WHERE id = %s
-    """
+    if superseded_by_id is not None:
+        # Layer (b) cycle prevention: walk the chain from superseded_by_id
+        # and verify it does not lead back to canonical_event_id.  If it
+        # does, linking superseded_by_id as canonical_event_id's
+        # successor would create a cycle (canonical_event_id ->
+        # superseded_by_id -> ... -> canonical_event_id) -- reject.
+        if _retirement_chain_includes(superseded_by_id, canonical_event_id):
+            raise ValueError(
+                f"retire_canonical_event: superseded_by_id={superseded_by_id} "
+                f"chain leads back to canonical_event_id={canonical_event_id}, "
+                f"cycle rejected"
+            )
+
+        # Single atomic UPDATE writing BOTH columns.  Pattern 73 SSOT:
+        # one statement, one transaction-visible state-transition --
+        # mid-transaction observers see either both-set or both-unset,
+        # never the half-state.
+        query = """
+            UPDATE canonical_events
+            SET retired_at = now(),
+                superseded_by = %s
+            WHERE id = %s
+        """
+        params: tuple[Any, ...] = (superseded_by_id, canonical_event_id)
+    else:
+        # Backward-compatible path: preserve pre-Migration-0087 terminal-
+        # tombstone semantics.  superseded_by remains NULL.
+        query = """
+            UPDATE canonical_events
+            SET retired_at = now()
+            WHERE id = %s
+        """
+        params = (canonical_event_id,)
+
     with get_cursor(commit=True) as cur:
-        cur.execute(query, (canonical_event_id,))
+        cur.execute(query, params)
         return cast("bool", cur.rowcount > 0)
 
 

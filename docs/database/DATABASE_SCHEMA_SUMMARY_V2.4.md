@@ -1,6 +1,69 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0086, verified=2026-05-07, tables=62, migrations=82, last_changelog_migration=0086 -->
+<!-- FRESHNESS: alembic_head=0087, verified=2026-05-07, tables=62, migrations=83, last_changelog_migration=0087 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0086 -> 0087 (V2.4 amended-in-place, 2026-05-07):
+
+Cleanup epic Slot 3 -- canonical_events retirement cascade (CL-7 path b
+from session 94 cleanup-epic council synthesis; ADR-118 V2.47 amendment
+codifies the rule at Slot 5 / session 99):
+
+Migration 0087 (cleanup epic Slot 3, session 97) -- canonical_events
+retirement cascade.  Realizes CL-7 path b from session 94 cleanup-epic
+council synthesis; ADR-118 V2.47 amendment codifies the rule (lands at
+Slot 5 / session 99).
+
+Two schema-mutation surfaces in single transaction:
+
+  - ADD COLUMN canonical_events.superseded_by BIGINT NULL with inline
+    self-referencing FK -> canonical_events(id) ON DELETE SET NULL.
+    Empty target table (canonical_events at 0 rows MCP-verified pre-
+    build); FK self-validation trivial; Pattern 84 NOT applied (P91
+    catch #1: straight-add via inline REFERENCES is correct on an empty
+    self-referencing table).  Pattern 84 ledger stays at 3 uses (slots
+    0080 + 0082 + 0086) post-Slot-3.
+  - ADD CONSTRAINT canonical_events_no_self_supersession CHECK
+    (superseded_by IS NULL OR superseded_by <> id).  Single-row self-
+    cycle prevention -- layer (a) of the 3-layer cycle defense.
+
+Coordinated with the existing retired_at column to encode 3 row states:
+  Active row:                  superseded_by IS NULL AND retired_at IS NULL
+  Retired without replacement: superseded_by IS NULL AND retired_at IS NOT NULL
+                               (terminal tombstone)
+  Superseded (replaced):       superseded_by = <new_id> AND retired_at IS NOT NULL
+
+SSOT helper (Pattern 73) introduced in crud_canonical_events.py:
+  - get_active_canonical_event(id) walks superseded_by chain forward
+    via recursive CTE; returns terminal-active row OR None for tombstones
+    (per Q1 user adjudication).  100-hop iteration guard raises
+    RuntimeError on suspected cycle (layer c of 3-layer cycle defense).
+  - retire_canonical_event(id, superseded_by_id=...) extends with
+    optional kwarg.  When set: (a) walks chain from superseded_by_id
+    via _retirement_chain_includes() helper and raises ValueError if
+    canonical_event_id appears in chain (layer b of 3-layer cycle
+    defense -- Pattern 73 SSOT: one write surface = one validation
+    point); (b) writes BOTH retired_at AND superseded_by in a SINGLE
+    atomic UPDATE.  Backward-compat preserved (no kwarg = pre-Migration-
+    0087 terminal-tombstone semantics).
+
+Pattern 87 reaffirmed: zero edits to migrations 0001-0086.  All shipped
+migration bodies + docstrings reflect their post-ship schema state and
+are correct, not stale.
+
+Pattern 91 V1.44 self-discipline: all build-time premises MCP-verified
+before DDL composition (alembic_head=0086, canonical_events at 0 rows,
+column inventory confirmed at 14 columns pre-0087, superseded_by
+confirmed absent).
+
+Migration count 82 -> 83; table count unchanged at 62 (no table changes;
+1 column added).
+
+Cleanup epic forward plan: Slot 4A + 4B (CL-3 invasiveness narrow;
+~session 98) -- drop games.game_status only.  Slot 5 (V2.47 ADR
+amendment + retirement-cascade rule codification + Pattern 82 V2 scope-
+narrowing + #1163 cosmetic-cleanup folding; ~session 99).
+
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0085 -> 0086 (V2.4 amended-in-place, 2026-05-07):
 
@@ -625,6 +688,32 @@ The tables Cohort 3 builds atop (and the close-out retrofits applied to them):
     `canonical_events_series_id_fkey` auto-drop with their columns. The
     Migration 0077 SET NULL polarity work above is preserved historically
     (Pattern 87 immutable) but no longer applies post-Slot-2.
+  - **Column-level update (Migration 0087 / cleanup epic Slot 3 — retirement cascade):**
+    `canonical_events.superseded_by` is **ADDED** by Migration 0087 (CL-7
+    path b from session 94 cleanup-epic council synthesis).  BIGINT NULL,
+    self-referencing FK -> `canonical_events(id)` ON DELETE SET NULL.  CHECK
+    constraint `canonical_events_no_self_supersession` blocks single-row
+    self-cycles (id->id); multi-row cycles are blocked at the application
+    layer by `crud_canonical_events.retire_canonical_event(id,
+    superseded_by_id=...)` write-side validation.
+    - Coordinated with `retired_at` to encode 3 row states: active
+      (`superseded_by IS NULL AND retired_at IS NULL`); terminal tombstone
+      (`superseded_by IS NULL AND retired_at IS NOT NULL`); superseded
+      (`superseded_by = <new_id> AND retired_at IS NOT NULL`).
+    - SSOT helper `crud_canonical_events.get_active_canonical_event(id)`
+      walks the chain forward via recursive CTE; returns the terminal-
+      active row OR None (tombstones return None per Q1 adjudication).
+      Forward callers (Cohort 5+ matcher slot, future strategy/model
+      code) use the helper rather than inline `WHERE` clauses.
+    - 3-layer cycle defense (per Q2 adjudication): (a) DB-level CHECK at
+      this slot; (b) helper write-side cycle check inside
+      `retire_canonical_event(superseded_by_id=...)` (Pattern 73 SSOT --
+      one write surface = one validation point); (c) helper read-side
+      100-hop guard in `get_active_canonical_event` (runtime safety net).
+    - Pattern 84 NOT applied (P91 catch #1: empty self-referencing table
+      means FK self-validation cannot block; straight-add via inline
+      REFERENCES is correct).  Pattern 84 ledger stays at 3 uses (slots
+      0080 + 0082 + 0086) post-Slot-3.
 - `canonical_markets` — referenced by `canonical_market_links.canonical_market_id`
   (slot 0072) with `ON DELETE RESTRICT`; by `canonical_match_log.canonical_market_id`
   (slot 0073) with `ON DELETE SET NULL` (Holden P1 catch — explicit closure of the

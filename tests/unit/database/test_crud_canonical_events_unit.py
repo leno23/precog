@@ -9,8 +9,16 @@ Covers (function-by-function):
       column projection fidelity.
     - get_canonical_event_by_natural_key_hash: happy path (row found),
       None (not found), BYTEA params shape, column projection fidelity.
-    - retire_canonical_event: True (row updated), False (no row),
-      retired_at-only SET clause discipline.
+    - get_active_canonical_event (Migration 0087, cleanup epic Slot 3):
+      walks superseded_by chain forward; returns terminal-active row OR
+      None (per Q1 adjudication: tombstones return None, not the
+      tombstone row); 100-hop guard raises RuntimeError on cycle.
+    - retire_canonical_event:
+      backward-compat path (no superseded_by_id): True (row updated),
+      False (no row), retired_at-only SET clause discipline.
+      extension path (superseded_by_id provided -- Migration 0087):
+      writes BOTH columns atomically in a single UPDATE; rejects cycle
+      introduction with ValueError; allows chain extension forward.
     - get_canonical_event_domain_id_by_domain: happy path, None (not seeded),
       case-sensitivity passthrough.
     - get_canonical_event_type_id_by_domain_and_type: happy path, None (not
@@ -41,6 +49,7 @@ import pytest
 
 from precog.database.crud_canonical_events import (
     create_canonical_event,
+    get_active_canonical_event,
     get_canonical_event_by_id,
     get_canonical_event_by_natural_key_hash,
     get_canonical_event_domain_id_by_domain,
@@ -70,6 +79,7 @@ def _full_row_dict(
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     retired_at: datetime | None = None,
+    superseded_by: int | None = None,
 ) -> dict:
     """Build a full canonical_events row dict matching the real query shape.
 
@@ -79,8 +89,9 @@ def _full_row_dict(
     ``_full_row_dict`` helper in ``test_crud_canonical_markets_unit.py``.
 
     Migration 0086 (cleanup epic Slot 2 / session 96) DROPped game_id +
-    series_id from the column inventory; the post-Slot-2 row dict carries
-    14 keys (was 16 pre-Slot-2).
+    series_id from the column inventory; Migration 0087 (cleanup epic
+    Slot 3 / session 97) ADDed superseded_by.  Post-Slot-3 the row dict
+    carries 15 keys (was 14 post-Slot-2, was 16 pre-Slot-2).
     """
     if participants_sorted is None:
         participants_sorted = [1, 2]
@@ -105,14 +116,17 @@ def _full_row_dict(
         "created_at": created_at,
         "updated_at": updated_at,
         "retired_at": retired_at,
+        "superseded_by": superseded_by,
     }
 
 
 # Migration 0085 (cleanup epic Slot 1) renamed canonical_events.domain_id
 # -> event_domain_id and canonical_events.entities_sorted ->
 # participants_sorted.  Migration 0086 (cleanup epic Slot 2) DROPped
-# game_id + series_id (CL-2 denorm collapse).  Tuple values mirror the
-# post-Slot-2 column names in the SELECT/RETURNING projections.
+# game_id + series_id (CL-2 denorm collapse).  Migration 0087 (cleanup
+# epic Slot 3) ADDed superseded_by (self-FK + retirement-cascade).
+# Tuple values mirror the post-Slot-3 column names in the SELECT /
+# RETURNING projections.
 _ALL_CANONICAL_EVENTS_COLUMNS = (
     "id",
     "event_domain_id",
@@ -128,6 +142,7 @@ _ALL_CANONICAL_EVENTS_COLUMNS = (
     "created_at",
     "updated_at",
     "retired_at",
+    "superseded_by",
 )
 
 
@@ -608,6 +623,303 @@ class TestRetireCanonicalEvent:
         assert "retired_at is null" not in where_clause.lower()
         # Positive shape pin: the WHERE is simply ``id = %s``
         assert "id = %s" in where_clause
+
+
+# =============================================================================
+# get_active_canonical_event (Migration 0087, cleanup epic Slot 3)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGetActiveCanonicalEvent:
+    """Unit tests for get_active_canonical_event -- recursive-CTE chain walk
+    returning terminal-active row OR None (per Q1 adjudication: tombstones
+    return None, not the tombstone row)."""
+
+    @patch("precog.database.crud_canonical_events.fetch_one")
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u1_returns_active_row(self, mock_get_cursor, mock_fetch_one):
+        """U1: helper called with active row id returns that row.
+
+        Setup: 1 row (superseded_by=NULL, retired_at=NULL) -- terminal-active.
+        First-pass cycle-detection probe returns max_hops=0; second-pass
+        returns the active row; helper returns it.
+        """
+        # First pass (cycle-detection probe via get_cursor):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"max_hops": 0}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        # Second pass (active-row resolver via fetch_one):
+        expected_row = _full_row_dict(id=7, superseded_by=None, retired_at=None)
+        mock_fetch_one.return_value = expected_row
+
+        result = get_active_canonical_event(7)
+
+        assert result == expected_row
+        # Verify recursive CTE shape on cycle-detection probe
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "WITH RECURSIVE chain" in sql
+        assert "hops < 100" in sql
+        # Verify resolver path
+        active_sql = mock_fetch_one.call_args[0][0]
+        assert "WITH RECURSIVE chain" in active_sql
+        assert "superseded_by IS NULL" in active_sql
+        assert "retired_at IS NULL" in active_sql
+
+    @patch("precog.database.crud_canonical_events.fetch_one")
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u2_returns_none_for_terminal_tombstone(self, mock_get_cursor, mock_fetch_one):
+        """U2: helper returns None for retired-without-replacement (Q1 boundary).
+
+        Setup: 1 row (superseded_by=NULL, retired_at=now()) -- terminal
+        tombstone.  Per Q1 user adjudication: helper returns None, NOT
+        the tombstone row.  Callers needing the tombstone state can fall
+        through to ``get_canonical_event_by_id()``.
+        """
+        # First pass: cycle-detection probe shows depth=0 (single row chain).
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"max_hops": 0}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        # Second pass: no row matches (superseded_by IS NULL AND retired_at IS NULL)
+        # since the only row has retired_at IS NOT NULL.
+        mock_fetch_one.return_value = None
+
+        result = get_active_canonical_event(7)
+
+        # Q1 boundary: tombstones return None, not the tombstone row.
+        assert result is None
+
+    @patch("precog.database.crud_canonical_events.fetch_one")
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u3_walks_one_hop_chain(self, mock_get_cursor, mock_fetch_one):
+        """U3: helper walks 1-hop chain old(retired) -> new(active).
+
+        Setup: 2 rows -- old (superseded_by=new_id, retired_at=now()) +
+        new (superseded_by=NULL, retired_at=NULL).  Helper called with
+        old_id walks one hop and returns the new row.
+        """
+        # First pass: chain depth = 1
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"max_hops": 1}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        # Second pass: returns the active head (id 8, the new row)
+        expected_row = _full_row_dict(id=8, superseded_by=None, retired_at=None)
+        mock_fetch_one.return_value = expected_row
+
+        result = get_active_canonical_event(7)
+
+        assert result == expected_row
+        assert result["id"] == 8
+        assert result["superseded_by"] is None
+        assert result["retired_at"] is None
+
+    @patch("precog.database.crud_canonical_events.fetch_one")
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u4_walks_multi_hop_chain(self, mock_get_cursor, mock_fetch_one):
+        """U4: helper walks 3-row chain id1 -> id2 -> id3 (id3 active).
+
+        Setup: 3 rows in a forward retirement chain; helper called with
+        id1 walks two hops and returns id3.
+        """
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"max_hops": 2}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        expected_row = _full_row_dict(id=3, superseded_by=None, retired_at=None)
+        mock_fetch_one.return_value = expected_row
+
+        result = get_active_canonical_event(1)
+
+        assert result == expected_row
+        assert result["id"] == 3
+
+    @patch("precog.database.crud_canonical_events.fetch_one")
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u5_returns_none_for_missing_id(self, mock_get_cursor, mock_fetch_one):
+        """U5: helper returns None when start id does not exist.
+
+        Setup: id 99999 does not exist; recursive CTE returns zero rows;
+        first-pass probe returns max_hops=None; second-pass resolver
+        returns None.  Helper returns None without raising.
+        """
+        mock_cursor = MagicMock()
+        # When the start id doesn't exist, the recursive CTE returns no
+        # rows; MAX(hops) over zero rows is NULL (None in Python).
+        mock_cursor.fetchone.return_value = {"max_hops": None}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_fetch_one.return_value = None
+
+        result = get_active_canonical_event(99999)
+
+        assert result is None
+
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u6_raises_runtimeerror_on_cycle(self, mock_get_cursor):
+        """U6: helper raises RuntimeError when chain saturates 100-hop bound.
+
+        Setup: simulate a 2-row cycle (id1 -> id2 -> id1 -> ...).  The
+        recursive CTE would expand each hop until the depth bound; the
+        first-pass probe returns max_hops=100, helper raises.
+
+        Pattern 73 SSOT: the read-side 100-hop guard is layer (c) of the
+        3-layer cycle defense; this test pins the failure mode for any
+        cycle that escaped the application-layer write-side validation
+        (e.g., direct SQL writes bypassing retire_canonical_event).
+        """
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"max_hops": 100}
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            get_active_canonical_event(7)
+        assert "100 hops" in str(exc_info.value)
+        assert "id=7" in str(exc_info.value)
+
+
+# =============================================================================
+# retire_canonical_event extension (Migration 0087, cleanup epic Slot 3)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestRetireCanonicalEventWithSupersededBy:
+    """Unit tests for retire_canonical_event(id, superseded_by_id=...) --
+    Migration 0087 / cleanup epic Slot 3 extension.  Pattern 73 SSOT cycle
+    prevention: layer (b) of 3-layer defense lives in this write surface.
+    """
+
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    @patch("precog.database.crud_canonical_events._retirement_chain_includes")
+    def test_u7_writes_both_columns_atomically(self, mock_chain_includes, mock_get_cursor):
+        """U7: retire(old_id, superseded_by_id=new_id) writes BOTH columns
+        in a SINGLE atomic UPDATE.
+
+        Atomicity invariant: external observers reading the row mid-
+        transaction see either pre-state (both NULL) or post-state (both
+        set), never the half-state.  Pinned by checking that exactly ONE
+        execute() call was made AND that its SQL writes both columns in
+        one SET clause.
+        """
+        mock_chain_includes.return_value = False  # No cycle
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = retire_canonical_event(7, superseded_by_id=42)
+
+        assert result is True
+        # Atomicity pin: exactly ONE execute() call, not two.
+        assert mock_cursor.execute.call_count == 1, (
+            "retire_canonical_event(superseded_by_id=...) must write both "
+            "columns in a single atomic UPDATE; got "
+            f"{mock_cursor.execute.call_count} execute() calls"
+        )
+        sql, params = mock_cursor.execute.call_args[0]
+        # Both columns appear in a single SET clause
+        assert "UPDATE canonical_events" in sql
+        set_clause = sql.split("WHERE")[0]
+        assert "retired_at = now()" in set_clause
+        assert "superseded_by = %s" in set_clause
+        assert "WHERE id = %s" in sql
+        # Params order: superseded_by_id first (matches SET column order),
+        # canonical_event_id second (WHERE).
+        assert params == (42, 7)
+        # Cycle-check helper was called with (superseded_by_id, canonical_event_id)
+        mock_chain_includes.assert_called_once_with(42, 7)
+
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    def test_u8_without_superseded_by_id_preserves_terminal_semantics(self, mock_get_cursor):
+        """U8: retire(id) without second arg preserves backward-compat path.
+
+        SET clause writes retired_at only; superseded_by stays NULL.
+        Existing tests in TestRetireCanonicalEvent above continue to
+        exercise this branch.  This test is the affirmative pin that the
+        backward-compat signature is preserved (callers writing
+        ``retire_canonical_event(id)`` -- no kwarg -- get exactly the
+        pre-Migration-0087 behavior).
+        """
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = retire_canonical_event(7)  # no superseded_by_id kwarg
+
+        assert result is True
+        sql, params = mock_cursor.execute.call_args[0]
+        set_clause = sql.split("WHERE")[0]
+        assert "retired_at = now()" in set_clause
+        # superseded_by must NOT appear in the backward-compat SET clause
+        assert "superseded_by" not in set_clause, (
+            "Backward-compat path (no superseded_by_id) must NOT write "
+            "superseded_by; got SET clause: " + set_clause
+        )
+        # Params shape: single-element tuple
+        assert params == (7,)
+
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    @patch("precog.database.crud_canonical_events._retirement_chain_includes")
+    def test_u9_rejects_cycle_introduction(self, mock_chain_includes, mock_get_cursor):
+        """U9: retire(old_id, superseded_by_id=new_id) raises ValueError if
+        new_id's chain leads back to old_id.
+
+        Pattern 73 SSOT cycle prevention -- layer (b) of the 3-layer
+        defense.  The cycle-check helper returns True; retire raises
+        BEFORE writing; the database UPDATE is never issued.
+        """
+        # Simulate cycle: chain from new_id (42) leads back to old_id (7).
+        mock_chain_includes.return_value = True
+
+        with pytest.raises(ValueError) as exc_info:
+            retire_canonical_event(7, superseded_by_id=42)
+
+        msg = str(exc_info.value)
+        assert "canonical_event_id=7" in msg
+        assert "superseded_by_id=42" in msg
+        assert "cycle rejected" in msg
+        # Critical invariant: no UPDATE was issued (database state unchanged).
+        mock_get_cursor.assert_not_called()
+
+    @patch("precog.database.crud_canonical_events.get_cursor")
+    @patch("precog.database.crud_canonical_events._retirement_chain_includes")
+    def test_u10_allows_chain_extension_forward(self, mock_chain_includes, mock_get_cursor):
+        """U10: retire(id3, superseded_by_id=id4) succeeds when id4 is fresh.
+
+        Setup: 3-row chain id1 -> id2 -> id3 (id3 active); caller wants to
+        extend the chain forward by retiring id3 with superseded_by_id=id4
+        (fresh row).  The cycle check walks id4's chain (which is empty
+        or terminates without including id3); returns False; retire
+        proceeds normally.
+
+        This test discriminates "valid chain extension" from "cycle
+        introduction" -- both involve writing superseded_by_id to a
+        retired row, but only the cycle case should raise.
+        """
+        # Cycle check returns False (id4's chain does NOT include id3).
+        mock_chain_includes.return_value = False
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = retire_canonical_event(3, superseded_by_id=4)
+
+        assert result is True
+        # Cycle-check helper was consulted with (superseded_by_id=4,
+        # canonical_event_id=3) before the UPDATE.
+        mock_chain_includes.assert_called_once_with(4, 3)
+        # UPDATE was issued with both-columns-in-one-statement shape.
+        assert mock_cursor.execute.call_count == 1
+        sql, params = mock_cursor.execute.call_args[0]
+        assert "superseded_by = %s" in sql
+        assert "retired_at = now()" in sql
+        assert params == (4, 3)
 
 
 # =============================================================================

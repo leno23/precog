@@ -1,4 +1,4 @@
-<!-- FRESHNESS: schema as of migration 0086 (V2.45 amendment + V2.47 cleanup epic Slots 1+2), session 96 -->
+<!-- FRESHNESS: schema as of migration 0087 (V2.45 amendment + V2.47 cleanup epic Slots 1+2+3), session 97 -->
 <!-- Migration 0085 (cleanup epic Slot 1, session 95) renamed:
        canonical_entity TABLE -> canonical_entities
        canonical_events.domain_id -> event_domain_id
@@ -15,11 +15,23 @@
        DROP canonical_events.game_id + DROP canonical_events.series_id
          (CL-2 denorm collapse; canonical_events no longer carries
          platform-side dim FKs)
-     This doc reflects the post-Slot-2 FK direction (teams ->
-     canonical_entities) and the post-Slot-2 canonical_events column
-     inventory (no game_id, no series_id).
-     Index names and CRUD module file name unchanged in this slot
-     (deferred to a future cosmetic-cleanup slot). -->
+     Migration 0087 (cleanup epic Slot 3, session 97) added the soft-
+     delete retirement cascade:
+       ADD canonical_events.superseded_by BIGINT NULL with self-
+         referencing FK -> canonical_events(id) ON DELETE SET NULL
+         (Pattern 84 NOT applied; empty self-referencing table)
+       ADD CONSTRAINT canonical_events_no_self_supersession
+         CHECK (superseded_by IS NULL OR superseded_by <> id)
+         (single-row self-cycle prevention -- layer (a) of 3-layer
+          cycle defense; layers b + c live in crud_canonical_events.py)
+       Soft-delete retirement-cascade model: canonical_events rows
+       retire forward-pointing to a successor (when superseded) or
+       to NULL (terminal tombstone).  SSOT helper
+       get_active_canonical_event(id) walks the chain.
+     This doc reflects the post-Slot-3 canonical_events column
+     inventory (15 columns including superseded_by self-FK).
+     Index names and CRUD module file name unchanged across cleanup
+     epic slots 1-3 (deferred to a future cosmetic-cleanup slot). -->
 
 
 # Canonical Layer Relationships
@@ -138,8 +150,12 @@ The canonical layer comprises 5 layers (4 main + a sub-layer for audit ledgers i
 |       |    election, a poll release,         platform events;            |
 |       |    a weather event,                  source-of-truth for         |
 |       |    a news event)                     matcher event-to-platform   |
-|       |                                      event binds — Layer 1 ↔     |
-|       |                                      Layer 2 connector)          |
+|       |     ^                                event binds — Layer 1 ↔     |
+|       |     | superseded_by                  Layer 2 connector)          |
+|       |     | (self-FK, slot 0087:                                        |
+|       |     |  retirement-cascade soft-delete                             |
+|       |     |  chain; CHECK blocks id->id)                                |
+|       |     +-- (loops to canonical_events)                               |
 |       |        ^                                       ^                 |
 |       |        |                                       |                 |
 |       v        |                                       v                 |
@@ -298,6 +314,24 @@ The canonical layer comprises 5 layers (4 main + a sub-layer for audit ledgers i
 - **Layer 3** is *universal observation fact*: one ID space across kinds, partitioned by ingest time, composite PK to enable partition routing. Two FK back-edges (multi-event tagging via `canonical_observation_event_links`; per-kind back-references via Cohort 5+ `observation_id` columns on per-kind tables).
 - **Layer 4** is *linkage*: pure relationship verbs, no domain typed columns. Pure-linkage discipline established by V2.45's `temporal_alignment` redesign.
 - **Layer 4.5** is *audit*: ledgers of decisions and lifecycle transitions. Carved out from Layer 4 because audit ledgers are *cross-cutting metadata about other layers' operations*, not relationship verbs between entities. Naming the sub-layer keeps Layer 4's verb category tight and gives audit ledgers a natural home for future expansion (e.g., reconciler-results table per V2.43 Item 4).
+
+### Soft-delete retirement-cascade model on `canonical_events` (Migration 0087, cleanup epic Slot 3)
+
+`canonical_events` is the only Layer 1 table with a *soft-delete retirement chain*: the `superseded_by` self-FK (Migration 0087) lets a retired canonical event point at its successor without losing the historical row. The model encodes 3 row states via the coordinated `superseded_by` + `retired_at` columns:
+
+- **Active row**: `superseded_by IS NULL AND retired_at IS NULL` — the canonical identity is current; future lookups should resolve to this row.
+- **Terminal tombstone**: `superseded_by IS NULL AND retired_at IS NOT NULL` — the canonical identity is retired without replacement; the row is preserved for audit but should not be returned by future identity lookups.
+- **Superseded**: `superseded_by = <new_id> AND retired_at IS NOT NULL` — the canonical identity has been replaced by another row; future lookups for the old row's natural identity should resolve to the chain head via `get_active_canonical_event(old_id)`.
+
+The Pattern 73 SSOT helper `crud_canonical_events.get_active_canonical_event(id)` is the canonical entry point for active-row resolution: it walks the `superseded_by` chain forward via recursive CTE and returns either the terminal-active row or `None` (tombstones return `None`, not the tombstone row, per the Q1 design adjudication). Forward callers (Cohort 5+ matcher slot, future strategy/model code) must use the helper rather than inline `WHERE` clauses against `superseded_by` or `retired_at`.
+
+Cycle prevention is layered (3-layer defense per session 97 design adjudication):
+
+1. **DB-level CHECK** (Migration 0087): `canonical_events_no_self_supersession CHECK (superseded_by IS NULL OR superseded_by <> id)` blocks single-row id->id self-cycles at all row counts. Cheap forward-looking insurance.
+2. **Helper write-side cycle check** (`crud_canonical_events.retire_canonical_event(id, superseded_by_id=...)` extension): before writing the supersession link, the function walks the chain from `superseded_by_id` and raises `ValueError` if the canonical_event being retired appears anywhere in that chain. Pattern 73 SSOT: one write surface, one validation point — the meaningful production-cycle barrier when the table is populated.
+3. **Helper read-side 100-hop guard** (`get_active_canonical_event`): runtime safety net against any chain that escaped (1)+(2) via direct SQL writes; the recursive CTE caps at 100 hops and raises `RuntimeError` on suspected cycles.
+
+Other Layer 1 tables (`canonical_entities`, `canonical_markets`, the lookup tables) carry only `retired_at` (terminal-tombstone semantics, no chain). The retirement-cascade model is canonical-events-specific and is the canonical answer to "this canonical event was actually a duplicate of that one — point new lookups at the right row, but preserve audit history".
 
 ---
 
