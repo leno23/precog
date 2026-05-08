@@ -565,11 +565,10 @@ def get_active_canonical_event(canonical_event_id: int) -> dict[str, Any] | None
           FROM chain
     """
     # First pass: detect cycle via depth-bound saturation.  If max_hops
-    # reaches 100, the chain either is exactly 100 deep (operationally
-    # impossible without active operator-driven re-supersession) or is
-    # cyclic (the recursive CTE re-enters the same row but the depth
-    # bound prevents runaway).  Either way the helper raises -- 100 hops
-    # is a data-quality flag.
+    # reaches 100, the chain is either truly 100 deep or cyclic (the
+    # recursive CTE re-enters the same row but the depth bound prevents
+    # runaway).  Either way the helper raises -- 100 hops is a
+    # data-quality flag, tunable via constant if proven too tight.
     with get_cursor() as cur:
         cur.execute(query, (canonical_event_id,))
         depth_row = cur.fetchone()
@@ -723,6 +722,13 @@ def retire_canonical_event(
             blocked).  No row is updated when this fires; database state
             is unchanged.  Pattern 73 SSOT cycle prevention -- one write
             surface = one validation point.
+        psycopg2.errors.ForeignKeyViolation: If ``superseded_by_id`` does
+            not reference an existing ``canonical_events.id`` row.  The
+            inline FK constraint (``canonical_events_superseded_by_fkey``,
+            shipped Migration 0087) rejects the UPDATE at the DB level.
+            The cycle-prevention chain-walk does not pre-validate
+            existence (an empty chain trivially does not include the
+            target); the FK does the existence enforcement.
 
     Example:
         >>> # Pre-Migration-0087 callstyle (still supported):

@@ -438,7 +438,9 @@ def test_i7_migration_0087_round_trip_parity(db_pool: Any) -> None:
             """
             SELECT data_type, is_nullable
             FROM information_schema.columns
-            WHERE table_name = 'canonical_events' AND column_name = 'superseded_by'
+            WHERE table_schema = 'public'
+              AND table_name = 'canonical_events'
+              AND column_name = 'superseded_by'
             """
         )
         col_row = cur.fetchone()
