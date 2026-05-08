@@ -1,5 +1,7 @@
 # Database Schema Summary
 
+<!-- RETIRED: V2.3 (alembic_head=0077, 2026-04-29) is superseded by V2.4 (current canonical, alembic_head=0086, 2026-05-07). Kept for changelog history per Pattern 86 (DEVELOPMENT_PATTERNS V1.39+). For current schema state see DATABASE_SCHEMA_SUMMARY_V2.4.md. Banner added Slot 2 polish bundle, session 96 (Ripley P2-2). -->
+
 <!-- FRESHNESS: alembic_head=0077, verified=2026-04-29, tables=58, migrations=76, last_changelog_migration=0077 -->
 <!--
 Changelog from prior FRESHNESS marker (V2.2: alembic_head=0074, verified=2026-04-29, tables=58, migrations=74):
