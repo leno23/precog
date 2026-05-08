@@ -100,31 +100,51 @@ def test_teams_canonical_entity_id_column_exists(db_pool: Any) -> None:
     )
 
 
+#: Documented minimum threshold for teams seed across dev + test envs.  Test
+#: DB seeds ~984 teams; dev DB seeds ~1,034.  500 is a defensible floor that
+#: catches non-catastrophic row loss without coupling to either env's exact
+#: count.  Glokta Slot 2 Nit 1 (session 96) flagged the prior `> 0` check as
+#: catching only catastrophic row loss (total=0); this threshold tightens
+#: the row-preservation invariant.  A precise pre-vs-post count comparison
+#: would require a pre-migration fixture snapshot (deferred to future
+#: test-infra cleanup slot — not blocking).
+_TEAMS_FIXTURE_SEED_MIN = 500
+
+
 def test_teams_canonical_entity_id_all_rows_null(db_pool: Any) -> None:
     """All existing teams rows have NULL canonical_entity_id post-migration.
 
     Pattern 91 V1.44 premise verification at PM build time confirmed teams
-    populated (1,034 rows in the dev DB; test DB row count varies but is
-    always > 0); no rows populated on canonical_entity_id (Cohort 5+ matcher
-    slot ~session 101 populates this column when canonical_entities rows
-    are first seeded).
+    populated (1,034 rows in the dev DB; test DB seeds ~984); no rows
+    populated on canonical_entity_id (Cohort 5+ matcher slot ~session 101
+    populates this column when canonical_entities rows are first seeded).
 
-    The total-row-count assertion (`total > 0`) pins the row-preservation
-    invariant without coupling to an exact dev-DB count -- the failure mode
-    we're catching is "ADD COLUMN dropped rows" which would manifest as
-    total=0, not as off-by-50 against the dev seed.
+    Three invariants are pinned:
+      1. `total >= _TEAMS_FIXTURE_SEED_MIN` — row-preservation lower bound;
+         catches both catastrophic loss (total=0) and non-trivial subset loss
+         (e.g., total=200) without coupling to either env's exact seed count.
+      2. `populated == 0` — FK-staging invariant: matcher slot has not yet
+         run, so all canonical_entity_id values must be NULL.
+      3. `total - populated == total` (algebraic complement) — collectively
+         confirms every row has NULL canonical_entity_id, not just that no
+         row has a non-NULL value.
     """
     with get_cursor() as cur:
         cur.execute("SELECT COUNT(*) AS total, COUNT(canonical_entity_id) AS populated FROM teams")
         row = cur.fetchone()
     assert row is not None, "teams count query must return a row"
-    assert row["total"] > 0, (
-        f"teams must have rows preserved post-Migration-0086 (ADD COLUMN must "
-        f"not drop rows); got total={row['total']}"
+    assert row["total"] >= _TEAMS_FIXTURE_SEED_MIN, (
+        f"teams must preserve rows post-Migration-0086 (ADD COLUMN must not "
+        f"drop rows); got total={row['total']}, expected >= "
+        f"{_TEAMS_FIXTURE_SEED_MIN} (test DB ~984, dev DB ~1,034)"
     )
     assert row["populated"] == 0, (
         f"teams.canonical_entity_id must have 0 populated rows post-Migration-0086 "
         f"(Cohort 5+ matcher populates later); got {row['populated']}"
+    )
+    assert row["total"] - row["populated"] == row["total"], (
+        f"algebraic complement: every teams row must have NULL "
+        f"canonical_entity_id; got total={row['total']}, populated={row['populated']}"
     )
 
 

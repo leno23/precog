@@ -22,6 +22,26 @@ Test Key Generation:
     Kalshi API authentication. The key is generated on-the-fly and NOT
     committed to git (security best practice). This ensures CI and local
     environments both have valid test keys without exposing real credentials.
+
+Known Test-DB-vs-Dev-DB Drift (Ripley Slot 2 P2-1, session 96):
+    The test database and the dev database have *different seed row counts*
+    for some platform-tier tables (notably ``teams``: ~984 in test DB,
+    ~1,034 in dev DB at the time of writing).  This drift is *expected*,
+    not a bug -- the seed scripts populate the two environments independently
+    and at different points in time.  Migration tests that assert on row
+    counts MUST NOT pin to either environment's exact count; instead, use
+    a defensible floor (e.g., ``>= 500`` for teams) that catches row-loss
+    failure modes without coupling to the seed.
+
+    Future test-infra slot consideration: a session-scoped pre-migration
+    fixture that captures row counts before alembic upgrade and exposes
+    them for post-migration ``count(post) == count(pre)`` conservation
+    assertions would be the principled fix.  Tracked in #1163 / Slot 5
+    V2.47 doc-sweep + future test-infra cleanup slot if pursued.
+
+    See ``tests/integration/database/test_migration_0086_canonical_fk_direction_flip.py``
+    ``_TEAMS_FIXTURE_SEED_MIN`` for the threshold-based pattern this drift
+    rule supports.
 """
 
 # =============================================================================

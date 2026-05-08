@@ -4,6 +4,10 @@
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0085 -> 0086 (V2.4 amended-in-place, 2026-05-07):
 
+Cleanup epic Slot 2 -- canonical FK direction flip + denorm collapse (CL-1
++ CL-2 from session 94 cleanup-epic council synthesis; ADR-118 V2.47
+amendment codifies the rule at Slot 5 / session 99):
+
 Migration 0086 (cleanup epic Slot 2, session 96) -- canonical FK direction
 flip + denorm collapse.  Realizes CL-1 + CL-2 from session 94 cleanup-epic
 council synthesis; ADR-118 V2.47 amendment codifies the rule (lands at
