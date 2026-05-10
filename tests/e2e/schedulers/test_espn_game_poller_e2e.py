@@ -670,13 +670,9 @@ class TestRealAPIPollerIntegration:
             assert isinstance(first_call_kwargs["period"], int)
             assert first_call_kwargs["period"] >= 0
 
-            # Game status should be one of the normalized values
-            assert first_call_kwargs["game_status"] in {
-                "pre",
-                "in_progress",
-                "halftime",
-                "final",
-            }
+            # Slot 4 (Migration 0089): game_status= kwarg DROPPED from
+            # upsert_game_state.  Status flows through games.game_status
+            # (authoritative parent) via the get_or_create_game() call.
 
             # clock_seconds should be Decimal or None (Pattern 1: NEVER float)
             clock_val = first_call_kwargs["clock_seconds"]
@@ -849,7 +845,9 @@ class TestRealAPIPollerIntegration:
         if result["items_fetched"] == 0:
             pytest.skip("No NFL games available in ESPN API today")
 
-        valid_statuses = {"pre", "in_progress", "halftime", "final"}
+        # Slot 4 (Migration 0089): game_status= kwarg DROPPED from upsert_game_state.
+        # Status flows through games.game_status (authoritative parent) via
+        # the get_or_create_game() call earlier in _sync_game_to_db.
 
         for i, upsert_call in enumerate(mock_upsert.call_args_list):
             kwargs = upsert_call.kwargs
@@ -858,9 +856,6 @@ class TestRealAPIPollerIntegration:
             # String fields
             assert isinstance(kwargs["espn_event_id"], str), (
                 f"Game {game_id}: espn_event_id not a string"
-            )
-            assert kwargs["game_status"] in valid_statuses, (
-                f"Game {game_id}: invalid game_status '{kwargs['game_status']}'"
             )
 
             # Integer fields

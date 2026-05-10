@@ -279,7 +279,6 @@ def test_scd_type2_at_most_one_current_row(
         away_team_id=teams["away_team_id"],
         home_score=0,
         away_score=0,
-        game_status="pre",
         league="nfl",
     )
 
@@ -306,7 +305,6 @@ def test_scd_type2_at_most_one_current_row(
         away_team_id=teams["away_team_id"],
         home_score=home_score,
         away_score=away_score,
-        game_status="in_progress",
         league="nfl",
     )
 
@@ -357,7 +355,6 @@ def test_decimal_precision_preserved_clock_seconds(
         away_team_id=teams["away_team_id"],
         clock_seconds=clock_seconds,
         clock_display=f"{int(clock_seconds) // 60}:{int(clock_seconds) % 60:02d}",
-        game_status="in_progress",
         league="nfl",
     )
 
@@ -400,7 +397,6 @@ def test_scd_type2_history_length_equals_updates_plus_one(
         away_team_id=teams["away_team_id"],
         home_score=0,
         away_score=0,
-        game_status="pre",
         league="nfl",
     )
 
@@ -412,7 +408,6 @@ def test_scd_type2_history_length_equals_updates_plus_one(
             away_team_id=teams["away_team_id"],
             home_score=i + 1,
             away_score=0,
-            game_status="in_progress",
             league="nfl",
         )
 

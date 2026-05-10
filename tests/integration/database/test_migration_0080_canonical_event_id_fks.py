@@ -201,16 +201,17 @@ def _seed_game_state(
     row_current_ind=true).
     """
     with get_cursor(commit=True) as cur:
+        # Slot 4 (Migration 0089): game_states.game_status DROPPED.
         cur.execute(
             """
             INSERT INTO game_states (
                 espn_event_id, game_state_key, league, league_id,
-                game_status, data_source, canonical_event_id, game_id
+                data_source, canonical_event_id, game_id
             )
             VALUES (
                 %s, %s, 'nfl',
                 (SELECT id FROM leagues WHERE league_key = 'nfl'),
-                'pre', 'espn', %s, %s
+                'espn', %s, %s
             )
             RETURNING id
             """,
@@ -568,16 +569,17 @@ def test_game_states_fk_violation_on_nonexistent_canonical_event(
     suffix = uuid.uuid4().hex[:8]
     with pytest.raises(psycopg2.errors.ForeignKeyViolation):
         with get_cursor(commit=True) as cur:
+            # Slot 4 (Migration 0089): game_states.game_status DROPPED.
             cur.execute(
                 """
                 INSERT INTO game_states (
                     espn_event_id, game_state_key, league, league_id,
-                    game_status, data_source, canonical_event_id
+                    data_source, canonical_event_id
                 )
                 VALUES (
                     %s, %s, 'nfl',
                     (SELECT id FROM leagues WHERE league_key = 'nfl'),
-                    'pre', 'espn', %s
+                    'espn', %s
                 )
                 """,
                 (

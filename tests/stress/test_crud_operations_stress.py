@@ -261,7 +261,6 @@ class TestHighVolumeGameStateOperations:
             away_team_id=teams[1],
             home_score=0,
             away_score=0,
-            game_status="pre",
             league="nfl",
         )
 
@@ -275,7 +274,6 @@ class TestHighVolumeGameStateOperations:
                 home_score=i,  # Incrementing score
                 away_score=0,
                 period=1,
-                game_status="in_progress",
                 league="nfl",
             )
         elapsed = time.time() - start_time
@@ -320,7 +318,6 @@ class TestHighVolumeGameStateOperations:
                 away_team_id=teams[(i + 1) % len(teams)],
                 home_score=0,
                 away_score=0,
-                game_status="pre",
                 league="nfl",
             )
 
@@ -336,7 +333,6 @@ class TestHighVolumeGameStateOperations:
                         away_team_id=teams[(game_idx + 1) % len(teams)],
                         home_score=update_num,
                         away_score=0,
-                        game_status="in_progress",
                         league="nfl",
                     )
                     time.sleep(0.01)  # Small delay to simulate real polling
@@ -398,7 +394,6 @@ class TestSCDType2RaceConditions:
             away_team_id=teams[1],
             home_score=0,
             away_score=0,
-            game_status="pre",
             league="nfl",
         )
 
@@ -415,7 +410,6 @@ class TestSCDType2RaceConditions:
                     away_team_id=teams[1],
                     home_score=7,
                     away_score=0,
-                    game_status="in_progress",
                     league="nfl",
                 )
                 results["thread_a"] = "success"
@@ -433,7 +427,6 @@ class TestSCDType2RaceConditions:
                     away_team_id=teams[1],
                     home_score=7,
                     away_score=3,
-                    game_status="in_progress",
                     league="nfl",
                 )
                 results["thread_b"] = "success"
@@ -486,7 +479,6 @@ class TestSCDType2RaceConditions:
             away_team_id=teams[1],
             home_score=0,
             away_score=0,
-            game_status="pre",
             league="nfl",
         )
 
@@ -504,7 +496,6 @@ class TestSCDType2RaceConditions:
                         away_team_id=teams[1],
                         home_score=i,
                         away_score=0,
-                        game_status="in_progress",
                         league="nfl",
                     )
                     time.sleep(0.05)
@@ -578,7 +569,6 @@ class TestDatabaseFailureRecovery:
             away_team_id=teams[1],
             home_score=7,
             away_score=0,
-            game_status="in_progress",
             league="nfl",
         )
 
@@ -595,7 +585,6 @@ class TestDatabaseFailureRecovery:
                 away_team_id=teams[1],
                 home_score=14,
                 away_score=0,
-                game_status="in_progress",
                 league="nfl",
             )
         except Exception:
@@ -661,7 +650,6 @@ class TestDatabaseFailureRecovery:
                 away_team_id=teams[(i + 1) % len(teams)],
                 home_score=0,
                 away_score=0,
-                game_status="pre",
                 league="nfl",
             )
 
@@ -677,7 +665,6 @@ class TestDatabaseFailureRecovery:
                             away_team_id=teams[0],
                             home_score=update_num,
                             away_score=0,
-                            game_status="in_progress",
                             league="nfl",
                         )
                     else:
@@ -687,7 +674,6 @@ class TestDatabaseFailureRecovery:
                             away_team_id=teams[(game_idx + 1) % len(teams)],
                             home_score=update_num + 1,
                             away_score=0,
-                            game_status="in_progress",
                             league="nfl",
                         )
                 except Exception as e:
@@ -769,7 +755,6 @@ class TestStateChangeDetectionStress:
                 home_score=14,
                 away_score=7,
                 period=2,
-                game_status="in_progress",
                 situation={"down": 2, "distance": 8, "possession": "home"},
             ):
                 false_count += 1
@@ -782,7 +767,6 @@ class TestStateChangeDetectionStress:
                 home_score=14 + (i % 3),  # Varying scores
                 away_score=7,
                 period=2,
-                game_status="in_progress",
                 situation={"down": 2, "distance": 8, "possession": "home"},
             ):
                 true_count += 1
@@ -845,7 +829,6 @@ class TestStateChangeDetectionStress:
                 home_score=0,
                 away_score=0,
                 period=1,
-                game_status="in_progress",
                 situation=new_situation,
             ):
                 changes_detected += 1
@@ -870,7 +853,6 @@ class TestStateChangeDetectionStress:
                 home_score=i % 100,
                 away_score=i % 50,
                 period=(i % 4) + 1,
-                game_status="in_progress" if i % 2 == 0 else "pre",
                 situation={"down": i % 4 + 1},
             ):
                 true_count += 1
@@ -913,7 +895,6 @@ class TestStateChangeDetectionStress:
                             home_score=21,
                             away_score=14,
                             period=3,
-                            game_status="in_progress",
                             situation={"down": 3, "distance": 5},
                         )
                         if not result:
@@ -926,7 +907,6 @@ class TestStateChangeDetectionStress:
                             home_score=21 + thread_id + 1,
                             away_score=14,
                             period=3,
-                            game_status="in_progress",
                             situation={"down": 3, "distance": 5},
                         )
                         if result:
@@ -1013,7 +993,6 @@ class TestStateChangeDetectionRace:
                         home_score=21,
                         away_score=14,
                         period=3,
-                        game_status="in_progress",
                         situation={"down": 2, "distance": 5, "yard_line": 45},
                     )
                     with lock:
@@ -1076,7 +1055,6 @@ class TestStateChangeDetectionRace:
                             home_score=10,
                             away_score=7,
                             period=2,
-                            game_status="in_progress",
                             situation={"down": 1, "distance": 10},
                         )
                         if not result:
@@ -1087,7 +1065,6 @@ class TestStateChangeDetectionRace:
                             home_score=10 + i,  # Different score
                             away_score=7,
                             period=2,
-                            game_status="in_progress",
                             situation={"down": 1, "distance": 10},
                         )
                         if result:
@@ -1171,7 +1148,6 @@ class TestStateChangeDetectionRace:
                         home_score=14,
                         away_score=14,
                         period=4,
-                        game_status="in_progress",
                         situation=new_situation,
                     )
 
@@ -1222,7 +1198,6 @@ class TestStateChangeDetectionRace:
                         home_score=thread_id + i,
                         away_score=i,
                         period=1,
-                        game_status="pre",
                         situation=None,
                     )
                     if result is True:

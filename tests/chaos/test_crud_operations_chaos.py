@@ -391,7 +391,7 @@ class TestGameStateNullHandling:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="pre",  # Not started
+            # Not started
             # home_score and away_score default to 0
         )
 
@@ -425,7 +425,6 @@ class TestGameStateNullHandling:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="final",
             home_score=21,
             away_score=14,
             situation=None,  # NULL JSONB
@@ -471,7 +470,6 @@ class TestGameStateBoundaryValues:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="final",
             home_score=0,  # Shutout
             away_score=35,
         )
@@ -506,7 +504,6 @@ class TestGameStateBoundaryValues:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="final",
             home_score=100,  # Very high but possible
             away_score=98,
         )
@@ -541,7 +538,6 @@ class TestGameStateBoundaryValues:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             home_score=21,
             away_score=21,
             period=5,  # Overtime
@@ -588,7 +584,6 @@ class TestGameStateEdgeCases:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="pre",
             linescores=[],  # Empty list
         )
 
@@ -642,7 +637,6 @@ class TestGameStateEdgeCases:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             home_score=14,
             away_score=10,
             situation=complex_situation,
@@ -683,7 +677,6 @@ class TestGameStateEdgeCases:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             situation=unicode_situation,
         )
 
@@ -800,7 +793,6 @@ class TestDecimalPrecisionChaos:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             clock_seconds=Decimal("123.456789"),  # High precision
         )
 
@@ -834,7 +826,6 @@ class TestDecimalPrecisionChaos:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             clock_seconds=Decimal("0.001"),  # Nearly zero
         )
 
@@ -868,7 +859,6 @@ class TestDecimalPrecisionChaos:
             home_team_id=1,
             away_team_id=2,
             venue_id=1,
-            game_status="in",
             period=2,
             clock_seconds=Decimal("0"),  # End of period
         )
@@ -908,7 +898,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="pre",
             situation=None,
         )
 
@@ -939,7 +928,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="pre",
             situation={},  # Empty dict treated same as None
         )
 
@@ -971,7 +959,6 @@ class TestGameStateChangedChaos:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={
                 "down": 2,
                 "distance": 5,
@@ -1009,7 +996,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=7,  # Score changed
             period=1,
-            game_status="in_progress",
             situation=None,
         )
 
@@ -1021,7 +1007,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="in_progress",
             situation=None,
         )
 
@@ -1051,7 +1036,7 @@ class TestGameStateChangedChaos:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",  # Same normalized status
+            # Same normalized status
             situation=None,
         )
 
@@ -1082,7 +1067,6 @@ class TestGameStateChangedChaos:
             home_score=21,
             away_score=21,
             period=5,  # Overtime
-            game_status="in_progress",
             situation=None,
         )
 
@@ -1102,7 +1086,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=0,
             period=1,  # Game starting
-            game_status="in_progress",
             situation=None,
         )
 
@@ -1130,7 +1113,6 @@ class TestGameStateChangedChaos:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="in_progress",
             situation={"down": 1, "distance": 10, "possession": "home"},
         )
 

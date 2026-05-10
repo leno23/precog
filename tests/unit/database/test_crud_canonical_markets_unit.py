@@ -32,12 +32,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from precog.database.constants import CANONICAL_MARKET_LIFECYCLE_PHASES
 from precog.database.crud_canonical_markets import (
     create_canonical_market,
     get_canonical_for_platform_market,
     get_canonical_market_by_id,
     get_canonical_market_by_natural_key_hash,
     retire_canonical_market,
+    update_canonical_market_lifecycle_phase,
 )
 
 
@@ -57,12 +59,16 @@ def _full_row_dict(
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     retired_at: datetime | None = None,
+    lifecycle_phase: str = "open",
 ) -> dict:
     """Build a full canonical_markets row dict matching the real query shape.
 
     Pattern 43 fidelity: every key the real RETURNING / SELECT projection
     emits is present, with no extras.  This is the SSOT for "what does a
     canonical_markets row dict look like in tests".
+
+    Slot 4 (Migration 0088): lifecycle_phase column added (5-value enum;
+    DEFAULT 'open'); Pattern 43 fidelity extends to include it.
     """
     if natural_key_hash is None:
         natural_key_hash = _sample_natural_key_hash()
@@ -80,6 +86,7 @@ def _full_row_dict(
         "created_at": created_at,
         "updated_at": updated_at,
         "retired_at": retired_at,
+        "lifecycle_phase": lifecycle_phase,
     }
 
 
@@ -549,3 +556,96 @@ class TestGetCanonicalForPlatformMarketStub:
         for bad_input in (0, -1, 999_999_999):
             with pytest.raises(NotImplementedError):
                 get_canonical_for_platform_market(platform_market_id=bad_input)
+
+
+# =============================================================================
+# Slot 4 (Migration 0088) -- canonical_markets.lifecycle_phase column tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCanonicalMarketsLifecyclePhaseColumn:
+    """L1-L4 (build spec § 6): lifecycle_phase column read/write surface."""
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_l1_create_canonical_market_returns_lifecycle_phase_in_row(self, mock_get_cursor):
+        """L1: create returns dict including lifecycle_phase (DEFAULT 'open' from DB).
+
+        Pattern 43 fidelity: post-Slot-4 the RETURNING projection includes
+        lifecycle_phase; mocked row dict reflects that.
+        """
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = _full_row_dict(lifecycle_phase="open")
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = create_canonical_market(
+            canonical_event_id=42,
+            market_type_general="binary",
+            outcome_label="Yes",
+            natural_key_hash=_sample_natural_key_hash(),
+        )
+
+        assert result["lifecycle_phase"] == "open"
+        # Verify the SQL projects lifecycle_phase in RETURNING.
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "lifecycle_phase" in sql, (
+            f"INSERT RETURNING must project lifecycle_phase post-Slot-4; got: {sql}"
+        )
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_l2_update_canonical_market_lifecycle_phase_valid(self, mock_get_cursor):
+        """L2: UPDATE valid value succeeds; auto-trigger writes audit row (DB side)."""
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = update_canonical_market_lifecycle_phase(7, "settling")
+
+        assert result is True
+        sql, params = mock_cursor.execute.call_args[0]
+        assert "UPDATE canonical_markets" in sql
+        assert "SET lifecycle_phase" in sql
+        assert params == ("settling", 7)
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_l3_update_canonical_market_lifecycle_phase_invalid_rejected(self, mock_get_cursor):
+        """L3: UPDATE invalid value raises ValueError BEFORE SQL (Pattern 73 SSOT)."""
+        with pytest.raises(ValueError, match="new_phase"):
+            update_canonical_market_lifecycle_phase(7, "not_a_real_phase")
+        mock_get_cursor.assert_not_called()
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_l3_event_vocab_value_rejected_in_market_validator(self, mock_get_cursor):
+        """L3 (table-target verification): event-vocab value rejected.
+
+        'pre_event' is in CANONICAL_EVENT_LIFECYCLE_PHASES but NOT in
+        CANONICAL_MARKET_LIFECYCLE_PHASES; the two are disjoint.
+        """
+        with pytest.raises(ValueError, match="new_phase"):
+            update_canonical_market_lifecycle_phase(7, "pre_event")
+        mock_get_cursor.assert_not_called()
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_l4_canonical_market_lifecycle_phase_full_state_machine(self, mock_get_cursor):
+        """L4: walk all 5 values in sequence (Pattern 73 SSOT real-guard sweep)."""
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        for phase in CANONICAL_MARKET_LIFECYCLE_PHASES:
+            result = update_canonical_market_lifecycle_phase(7, phase)
+            assert result is True
+
+    @patch("precog.database.crud_canonical_markets.get_cursor")
+    def test_update_canonical_market_lifecycle_phase_no_match_returns_false(self, mock_get_cursor):
+        """When no row matches the id, returns False."""
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 0
+        mock_get_cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_get_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = update_canonical_market_lifecycle_phase(99999, "open")
+        assert result is False

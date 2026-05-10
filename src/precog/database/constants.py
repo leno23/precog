@@ -30,30 +30,89 @@ CANONICAL_EVENT_LIFECYCLE_PHASES: Final[tuple[str, ...]] = (
     "listed",
     "pre_event",
     "live",
+    "completed",
+)
+"""Canonical 5-value vocabulary for ``canonical_events.lifecycle_phase``.
+
+Authoritative per ADR-118 V2.40 Cohort 1 carry-forward item 3 (initial
+8-value vocabulary) + V2.47 amendment (session 99) -- 8->5 reduction
+shipped in Migration 0088 R8 bundle.  Slot 4 of cleanup epic #1155.
+
+Migrations 0070 (initial 8-value CHECK on
+``canonical_events.lifecycle_phase``) + 0079 (8-value CHECKs on
+``canonical_event_phase_log.new_phase`` + ``previous_phase``) + 0088
+(reduce 8->5 across all three CHECKs in lockstep) enforce this list at
+the DDL layer.  State-machine transition code, projection views, and
+the phase-log consumer MUST import from here rather than hardcoding
+string literals (Pattern 73 SSOT).
+
+The 5-value vocabulary covers EVENT lifecycle:
+
+    ``proposed`` -> ``listed`` -> ``pre_event`` -> ``live`` -> ``completed``
+
+Resolution-tier states (suspended/settling/resolved/voided) moved to
+``canonical_markets.lifecycle_phase`` per Slot 4 R3 redistribution
+(per-canonical-market resolution divergence is canonical-tier by
+construction; see ``CANONICAL_MARKET_LIFECYCLE_PHASES`` below).
+``completed`` replaces ``resolved`` for the event-completion semantics.
+
+Five-way Pattern 73 SSOT parity test in
+``tests/integration/database/test_lifecycle_phase_vocabulary_ssot.py``
+verifies this constant matches the DDL CHECKs on (a) canonical_events,
+(b) canonical_event_phase_log.new_phase + previous_phase, (c)
+canonical_markets, (d) canonical_market_phase_log.new_phase +
+previous_phase.
+
+The tuple ordering reflects the canonical state-machine progression;
+ordering MAY be relied on by consumers (e.g., phase-precedence
+comparisons); a future migration that reorders values MUST update this
+constant in the same change.
+
+See DEVELOPMENT_PATTERNS V1.38 Pattern 84 for the two-phase
+NOT VALID + VALIDATE pattern that any future migration adding similar
+vocabulary CHECKs should follow.
+"""
+
+
+CANONICAL_MARKET_LIFECYCLE_PHASES: Final[tuple[str, ...]] = (
+    "open",
     "suspended",
     "settling",
     "resolved",
     "voided",
 )
-"""Canonical 8-value vocabulary for ``canonical_events.lifecycle_phase``.
+"""Canonical 5-value vocabulary for ``canonical_markets.lifecycle_phase``.
 
-Authoritative per ADR-118 V2.40 Cohort 1 carry-forward item 3.
+Authoritative per ADR-118 V2.39 revisit-trigger fired (Slot 4 cleanup
+epic #1155 R3 + R6 unanimous council 4-of-4) + V2.47 amendment
+(session 99).  Shipped by Migration 0088 (slot 4 cleanup epic).
 
-Migration 0070 (CHECK on ``canonical_events.lifecycle_phase``) and
-Migration 0077 (CHECK on ``canonical_event_phase_log.phase``, when it
-lands) both enforce this list at the DDL layer.  State-machine transition
-code, projection views, and the phase-log consumer MUST import from here
-rather than hardcoding string literals (Pattern 73 SSOT).
+Migration 0088 enforces this list at the DDL layer via:
+    (a) ``canonical_markets.lifecycle_phase`` inline CHECK + DEFAULT 'open'
+    (b) ``canonical_market_phase_log.new_phase`` CHECK
+    (c) ``canonical_market_phase_log.previous_phase`` CHECK (NULL-tolerant)
 
-The tuple ordering reflects the canonical state-machine progression:
-``proposed -> listed -> pre_event -> live -> (suspended -> live |
-settling -> resolved | voided)``.  Ordering MAY be relied on by consumers
-(e.g., phase-precedence comparisons); a future migration that reorders
-values MUST update this constant in the same change.
+State-machine semantics (Slot 4 council R6):
+    ``open``      -- market is tradable on at least one platform.
+    ``suspended`` -- temporarily halted (e.g., breaking news; resumable).
+    ``settling``  -- outcome determined; settlement in progress.
+    ``resolved``  -- settlement complete; payouts disbursed.
+    ``voided``    -- declared void (e.g., game cancelled before lock).
 
-See DEVELOPMENT_PATTERNS V1.38 Pattern 84 for the two-phase
-NOT VALID + VALIDATE pattern that any future migration adding similar
-vocabulary CHECKs should follow.
+Per CLAUDE.md Critical Pattern #8 (Pattern 73 SSOT): the
+``crud_canonical_market_phase_log.append_market_phase_transition()``
+CRUD function uses this constant in *real-guard* validation
+(slot 0079 inheritance per #1085 finding #2).
+
+Pattern 81 carve-out: this is intentionally NOT a lookup table.  The
+phase set is closed (every value binds to state-machine code branches
+per Pattern 81 § "When NOT to Apply"); same shape as
+``CANONICAL_EVENT_LIFECYCLE_PHASES``.
+
+Five-way Pattern 73 SSOT parity test in
+``tests/integration/database/test_lifecycle_phase_vocabulary_ssot.py``
+verifies this constant matches the DDL CHECKs on canonical_markets +
+canonical_market_phase_log.
 """
 
 

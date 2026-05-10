@@ -40,8 +40,23 @@ import logging
 from typing import Any, cast
 
 from .connection import fetch_one, get_cursor
+from .constants import CANONICAL_MARKET_LIFECYCLE_PHASES
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Slot 4 (Migration 0088) added canonical_markets.lifecycle_phase column
+# (5-value enum: open/suspended/settling/resolved/voided; DEFAULT 'open').
+#
+# Pattern 73 SSOT: vocabulary lives at constants.py:CANONICAL_MARKET_LIFECYCLE_PHASES.
+# This module imports it for any operator-input validation and exposes it
+# via column-projecting reads + the lifecycle-update helper below.
+# Phase transitions are mirrored to canonical_market_phase_log automatically
+# by the auto-trigger ``trg_canonical_markets_log_phase_transition`` (see
+# Migration 0088).  The phase-log read API + manual write API live in
+# ``crud_canonical_market_phase_log.py``.
+# =============================================================================
 
 
 # =============================================================================
@@ -92,7 +107,14 @@ def create_canonical_market(
     Returns:
         Full row dict of the created canonical market.  Keys:
             id, canonical_event_id, market_type_general, outcome_label,
-            natural_key_hash, metadata, created_at, updated_at, retired_at
+            natural_key_hash, metadata, created_at, updated_at, retired_at,
+            lifecycle_phase
+
+    Note:
+        ``lifecycle_phase`` defaults to ``'open'`` (Migration 0088 column
+        DEFAULT).  Use ``update_canonical_market_lifecycle_phase()`` to
+        transition the phase post-creation; the auto-trigger writes the
+        transition row to ``canonical_market_phase_log``.
 
     Raises:
         psycopg2.IntegrityError: If ``natural_key_hash`` already exists,
@@ -143,7 +165,8 @@ def create_canonical_market(
         )
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id, canonical_event_id, market_type_general, outcome_label,
-                  natural_key_hash, metadata, created_at, updated_at, retired_at
+                  natural_key_hash, metadata, created_at, updated_at, retired_at,
+                  lifecycle_phase
     """
 
     params = (
@@ -170,12 +193,14 @@ def get_canonical_market_by_id(canonical_market_id: int) -> dict[str, Any] | Non
     Returns:
         Full row dict if found, ``None`` otherwise.  Keys:
             id, canonical_event_id, market_type_general, outcome_label,
-            natural_key_hash, metadata, created_at, updated_at, retired_at
+            natural_key_hash, metadata, created_at, updated_at, retired_at,
+            lifecycle_phase
 
     Example:
         >>> row = get_canonical_market_by_id(7)
         >>> if row:
         ...     print(row["market_type_general"])  # 'binary'
+        ...     print(row["lifecycle_phase"])      # 'open' / 'settling' / etc.
         ...     print(row["retired_at"])           # None (active) or timestamp
 
     Educational Note:
@@ -190,7 +215,8 @@ def get_canonical_market_by_id(canonical_market_id: int) -> dict[str, Any] | Non
     """
     query = """
         SELECT id, canonical_event_id, market_type_general, outcome_label,
-               natural_key_hash, metadata, created_at, updated_at, retired_at
+               natural_key_hash, metadata, created_at, updated_at, retired_at,
+               lifecycle_phase
         FROM canonical_markets
         WHERE id = %s
     """
@@ -247,7 +273,8 @@ def get_canonical_market_by_natural_key_hash(
     """
     query = """
         SELECT id, canonical_event_id, market_type_general, outcome_label,
-               natural_key_hash, metadata, created_at, updated_at, retired_at
+               natural_key_hash, metadata, created_at, updated_at, retired_at,
+               lifecycle_phase
         FROM canonical_markets
         WHERE natural_key_hash = %s
     """
@@ -399,3 +426,77 @@ def get_canonical_for_platform_market(
         "through canonical_market_links filtered to link_state = 'active'."
     )
     raise NotImplementedError(msg)
+
+
+# =============================================================================
+# Slot 4 (Migration 0088) -- canonical_markets.lifecycle_phase update helper
+# =============================================================================
+
+
+def update_canonical_market_lifecycle_phase(
+    canonical_market_id: int,
+    new_phase: str,
+) -> bool:
+    """Transition a canonical_markets row's lifecycle_phase.
+
+    Pattern 73 SSOT entry point for canonical_markets.lifecycle_phase
+    transitions.  Validates ``new_phase`` against
+    ``CANONICAL_MARKET_LIFECYCLE_PHASES`` at the CRUD boundary; the
+    auto-trigger ``trg_canonical_markets_log_phase_transition`` writes
+    the audit row to ``canonical_market_phase_log`` automatically with
+    ``changed_by='system:trigger'``.
+
+    Args:
+        canonical_market_id: BIGSERIAL surrogate PK from
+            ``canonical_markets.id``.
+        new_phase: Target phase.  MUST be in
+            ``CANONICAL_MARKET_LIFECYCLE_PHASES`` (open / suspended /
+            settling / resolved / voided).
+
+    Returns:
+        ``True`` if a row was updated, ``False`` if no row matched the
+        given id.
+
+    Raises:
+        ValueError: ``new_phase`` not in
+            ``CANONICAL_MARKET_LIFECYCLE_PHASES`` -- raised before SQL.
+
+    Example:
+        >>> if update_canonical_market_lifecycle_phase(7, "settling"):
+        ...     # Auto-trigger has appended an audit row to
+        ...     # canonical_market_phase_log with previous_phase=<prior>,
+        ...     # new_phase='settling', changed_by='system:trigger'
+        ...     pass
+
+    Educational Note:
+        Operator-driven CORRECTIONS to the audit stream (without
+        actually changing canonical_markets.lifecycle_phase) use
+        ``crud_canonical_market_phase_log.append_market_phase_transition()``
+        directly; that path bypasses the canonical_markets UPDATE.
+
+        The ``updated_at`` column is automatically refreshed by
+        ``trg_canonical_markets_updated_at`` when this UPDATE fires.
+
+    Reference:
+        - Migration 0088 (table DDL + auto-trigger)
+        - ``constants.py`` ``CANONICAL_MARKET_LIFECYCLE_PHASES``
+        - ``crud_canonical_market_phase_log.py`` (sister-module read +
+          operator-correction write API)
+    """
+    # Pattern 73 SSOT real-guard validation.
+    if new_phase not in CANONICAL_MARKET_LIFECYCLE_PHASES:
+        raise ValueError(
+            f"new_phase {new_phase!r} not in canonical "
+            f"CANONICAL_MARKET_LIFECYCLE_PHASES {CANONICAL_MARKET_LIFECYCLE_PHASES!r}; "
+            "pattern 73 SSOT vocabulary violation"
+        )
+
+    query = """
+        UPDATE canonical_markets
+        SET lifecycle_phase = %s
+        WHERE id = %s
+    """
+    with get_cursor(commit=True) as cur:
+        cur.execute(query, (new_phase, canonical_market_id))
+        # cast: cur.rowcount through the context manager resolves to Any.
+        return cast("bool", cur.rowcount > 0)

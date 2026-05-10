@@ -755,6 +755,10 @@ class SeedingManager:
                             pass
 
                     try:
+                        # Slot 4 (Migration 0089): game_status= kwarg dropped
+                        # (column DROPPED).  The pre-game state is implied by
+                        # period=0 + no clock; status semantics live on
+                        # games.game_status (authoritative).
                         upsert_game_state(
                             espn_event_id=espn_event_id,
                             home_team_id=home_team_id,
@@ -762,7 +766,6 @@ class SeedingManager:
                             home_score=0,
                             away_score=0,
                             period=0,
-                            game_status="pre",
                             game_date=game_date,
                             league=sport,
                         )

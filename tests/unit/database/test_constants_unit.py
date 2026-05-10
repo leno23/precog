@@ -56,23 +56,23 @@ EXPECTED_PHASES: tuple[str, ...] = (
     "listed",
     "pre_event",
     "live",
-    "suspended",
-    "settling",
-    "resolved",
-    "voided",
+    "completed",
 )
+"""Slot 4 (Migration 0088 R8) reduced 8->5; resolution-tier states moved to
+canonical_markets.lifecycle_phase per R3 redistribution.  See
+``CANONICAL_MARKET_LIFECYCLE_PHASES`` for the 5-value market vocabulary."""
 
 
 class TestCanonicalEventLifecyclePhasesContents:
     """Direct value/shape assertions on the constant."""
 
-    def test_constant_matches_expected_8_values(self) -> None:
-        """Constant equals the spec's exact 8-tuple in the documented order."""
+    def test_constant_matches_expected_5_values(self) -> None:
+        """Constant equals the spec's exact 5-tuple post-Slot-4 R8 reduction."""
         assert CANONICAL_EVENT_LIFECYCLE_PHASES == EXPECTED_PHASES
 
-    def test_constant_length_is_exactly_8(self) -> None:
-        """Drift detector — count must be exactly 8 (not 7, not 9)."""
-        assert len(CANONICAL_EVENT_LIFECYCLE_PHASES) == 8
+    def test_constant_length_is_exactly_5(self) -> None:
+        """Drift detector — count must be exactly 5 (post-Slot-4 R8 reduction)."""
+        assert len(CANONICAL_EVENT_LIFECYCLE_PHASES) == 5
 
     def test_all_values_are_str(self) -> None:
         """Every entry is a ``str`` — type discipline for DDL comparison."""
@@ -139,33 +139,44 @@ class TestCanonicalEventLifecyclePhasesTyping:
         )
 
 
-class TestMigration0070CheckMatchesConstant:
-    """Load-bearing SSOT cross-validation: constant <-> Migration 0070 CHECK.
+class TestMigration0070CheckHistoricalShape:
+    """Historical artifact: Migration 0070 carries the ORIGINAL 8-value CHECK.
 
-    This is the test that fires if the migration's SQL string and the
-    constant ever drift apart.  It does NOT hardcode the 8 values a
-    third time — it parses them out of the migration file.
+    Slot 4 (Migration 0088) reduced the canonical_events.lifecycle_phase CHECK
+    from 8 values to 5 (R8 bundle); per Pattern 87 the original 0070 file
+    keeps its at-ship-time 8-value CHECK (immutable).  The current
+    constant value reflects the post-0088 state (5 values).  Live DB parity
+    is enforced by ``test_lifecycle_phase_vocabulary_ssot.py``
+    (integration test that queries the live CHECKs, not parses migration
+    file text).
+
+    This test class now verifies the migration FILE's at-ship-time shape
+    (8 values) as a historical artifact.  Drift between current constant
+    and 0070 file is EXPECTED post-Slot-4 (the constant moved; the file
+    didn't, by Pattern 87 design).
     """
+
+    # Slot 4 R8 bundle dropped these 4 values from the canonical_events vocabulary
+    # (they migrated to canonical_markets.lifecycle_phase per R3).
+    SLOT_4_R8_DROPPED_VALUES: frozenset[str] = frozenset(
+        {"suspended", "settling", "resolved", "voided"}
+    )
+
+    # Slot 4 R8 added this value to canonical_events.lifecycle_phase.
+    SLOT_4_R8_ADDED_VALUE: str = "completed"
 
     def test_migration_0070_file_exists(self) -> None:
         """Migration 0070 path resolves — guard for the regex parse below."""
         assert MIGRATION_0070_PATH.is_file(), f"Migration 0070 not found at {MIGRATION_0070_PATH}"
 
-    def test_migration_0070_check_values_equal_constant(self) -> None:
-        """The 8 values in the CHECK clause match the constant set-equality.
+    def test_migration_0070_at_ship_time_shape_preserved(self) -> None:
+        """Migration 0070 file content (Pattern 87 immutable) has its at-ship-time 8 values.
 
-        Regex parse strategy: find the CHECK clause, then extract every
-        single-quoted token inside it.  Set-equality (not ordered) since
-        the CHECK uses ``IN (...)`` which is order-independent at the SQL
-        layer; the constant's tuple ordering is for Python consumers.
+        Slot 4 (Migration 0088) reduced the LIVE CHECK to 5 values; this
+        test verifies the FILE was not edited (Pattern 87 discipline).
         """
         source = MIGRATION_0070_PATH.read_text(encoding="utf-8")
 
-        # Locate the CHECK clause for lifecycle_phase.  Pattern matches
-        # ``CHECK (lifecycle_phase IN (...))`` in the migration's
-        # multi-line SQL string concatenation.  ``re.DOTALL`` lets ``.``
-        # cross newlines because the SQL spans multiple Python string
-        # literals concatenated by adjacent-string-literal syntax.
         check_match = re.search(
             r"CHECK\s*\(\s*lifecycle_phase\s+IN\s*\((.*?)\)\)",
             source,
@@ -174,24 +185,48 @@ class TestMigration0070CheckMatchesConstant:
         assert check_match is not None, (
             "Could not find ``CHECK (lifecycle_phase IN (...))`` clause "
             f"in {MIGRATION_0070_PATH.name} — has the migration been "
-            "rewritten?  Update this test if the SQL shape changed."
+            "rewritten?  Pattern 87 forbids editing shipped migrations."
         )
 
-        # Extract every single-quoted token inside the matched CHECK body.
         check_body = check_match.group(1)
         migration_values = tuple(re.findall(r"'([^']+)'", check_body))
 
-        assert len(migration_values) == 8, (
-            f"Migration 0070 CHECK has {len(migration_values)} values, "
-            f"expected 8: {migration_values!r}"
+        # At-ship-time vocabulary: the 8-value original.
+        expected_at_ship = {
+            "proposed",
+            "listed",
+            "pre_event",
+            "live",
+            "suspended",
+            "settling",
+            "resolved",
+            "voided",
+        }
+        assert set(migration_values) == expected_at_ship, (
+            "Migration 0070 file has been edited (Pattern 87 violation).  "
+            "The at-ship-time 8-value vocabulary must be preserved verbatim; "
+            f"reductions/additions land in subsequent migrations.\n"
+            f"  File now contains: {sorted(migration_values)}\n"
+            f"  At-ship-time:      {sorted(expected_at_ship)}"
         )
 
-        # Set-equality — order in the SQL IN-list is independent.
-        assert set(migration_values) == set(CANONICAL_EVENT_LIFECYCLE_PHASES), (
-            "Migration 0070 CHECK values diverge from "
-            "CANONICAL_EVENT_LIFECYCLE_PHASES.\n"
-            f"  Migration: {sorted(migration_values)}\n"
-            f"  Constant:  {sorted(CANONICAL_EVENT_LIFECYCLE_PHASES)}\n"
-            "  Fix: update both the migration (new alembic revision) and "
-            "the constant in lockstep, per Pattern 73 SSOT."
+    def test_constant_reflects_post_slot_4_state_not_migration_0070(self) -> None:
+        """The constant tracks the LIVE CHECK shape (post-0088), not 0070.
+
+        Pattern 87: 0070 is immutable; subsequent migrations (0088 R8)
+        reduce the live CHECK and the constant moves in lockstep with
+        the live state.  The 4 dropped values from 0070 are NOT in the
+        current constant; the 1 added value IS.
+        """
+        constant_set = set(CANONICAL_EVENT_LIFECYCLE_PHASES)
+        # The 4 dropped values must NOT be in the current constant.
+        for dropped in self.SLOT_4_R8_DROPPED_VALUES:
+            assert dropped not in constant_set, (
+                f"Post-Slot-4 R8 reduction: {dropped!r} should NOT be in "
+                f"CANONICAL_EVENT_LIFECYCLE_PHASES; got {constant_set!r}"
+            )
+        # The 1 added value must be present.
+        assert self.SLOT_4_R8_ADDED_VALUE in constant_set, (
+            f"Post-Slot-4 R8: {self.SLOT_4_R8_ADDED_VALUE!r} should be in "
+            f"CANONICAL_EVENT_LIFECYCLE_PHASES; got {constant_set!r}"
         )

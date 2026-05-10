@@ -1405,6 +1405,9 @@ class ESPNGamePoller(BasePoller):
 
         # Upsert game state (SCD Type 2 handles versioning)
         # Returns new row ID if state changed, or existing ID/None if unchanged
+        # Slot 4 (Migration 0089): game_status= kwarg dropped (column DROPPED).
+        # Authoritative status lives at games.game_status (already written
+        # by the get_or_create_game() call above on this same poll cycle).
         result_id = upsert_game_state(
             espn_event_id=espn_event_id,
             home_team_id=home_team_id,
@@ -1415,7 +1418,6 @@ class ESPNGamePoller(BasePoller):
             period=state.get("period", 0),
             clock_seconds=clock_seconds,
             clock_display=state.get("clock_display"),
-            game_status=normalized_status,
             game_date=game_date,
             broadcast=metadata.get("broadcast"),
             neutral_site=metadata.get("neutral_site", False),

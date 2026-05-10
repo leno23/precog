@@ -203,7 +203,6 @@ class TestUpsertGameStateConcurrentFirstInsert:
                         home_score=7,
                         away_score=3,
                         period=1,
-                        game_status="in_progress",
                         league="nfl",
                         skip_if_unchanged=False,
                     )
@@ -214,7 +213,6 @@ class TestUpsertGameStateConcurrentFirstInsert:
                         home_score=14,
                         away_score=10,
                         period=2,
-                        game_status="in_progress",
                         league="nfl",
                         skip_if_unchanged=False,
                     )

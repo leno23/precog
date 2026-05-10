@@ -268,7 +268,6 @@ def test_create_game_state_assigns_canonical_game_state_key(db_pool: Any) -> Non
     state_id = create_game_state(
         espn_event_id=espn_event_id,
         league="nfl",
-        game_status="pre",
     )
     try:
         with get_cursor() as cur:
@@ -321,7 +320,6 @@ def test_upsert_game_state_carries_key_forward_on_supersede(db_pool: Any) -> Non
             home_score=0,
             away_score=0,
             period=0,
-            game_status="pre",
             league="nfl",
         )
         assert first_id is not None, "First upsert should have inserted"
@@ -340,7 +338,6 @@ def test_upsert_game_state_carries_key_forward_on_supersede(db_pool: Any) -> Non
             home_score=7,
             away_score=0,
             period=1,
-            game_status="in_progress",
             league="nfl",
         )
         assert second_id is not None, "Score change must create a new version"
@@ -658,7 +655,6 @@ def test_game_states_partial_unique_allows_historical_duplicates(db_pool: Any) -
             home_score=0,
             away_score=0,
             period=0,
-            game_status="pre",
             league="nfl",
         )
         upsert_game_state(
@@ -666,7 +662,6 @@ def test_game_states_partial_unique_allows_historical_duplicates(db_pool: Any) -
             home_score=7,
             away_score=0,
             period=1,
-            game_status="in_progress",
             league="nfl",
         )
         with get_cursor() as cur:

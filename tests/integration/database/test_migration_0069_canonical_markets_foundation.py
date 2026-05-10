@@ -118,17 +118,28 @@ def test_canonical_markets_column_shape(
         )
 
 
-def test_canonical_markets_has_no_lifecycle_phase_column(db_pool: Any) -> None:
-    """Per ADR-118 V2.39 Cohort 2 amendment decision #3: NO lifecycle_phase column.
+def test_canonical_markets_has_lifecycle_phase_column_post_slot_4(db_pool: Any) -> None:
+    """Slot 4 (Migration 0088 R3) ADDS lifecycle_phase column to canonical_markets.
 
-    Three-distinct-concerns model: per-platform lifecycle on ``markets.status``,
-    canonical-event lifecycle on ``canonical_events.lifecycle_phase``,
-    canonical-market retirement on ``retired_at`` only.
+    Originally Migration 0069 SHIPPED canonical_markets WITHOUT lifecycle_phase
+    per ADR-118 V2.39 Cohort 2 amendment decision #3 (three-distinct-concerns
+    model rejecting per-platform lifecycle redistribution).  Slot 4 (cleanup
+    epic #1155) revisits that decision: per-CANONICAL-MARKET resolution
+    divergence is canonical-tier by construction (distinct from the
+    per-platform divergence V2.39 correctly rejected).  Migration 0088 R3
+    adds lifecycle_phase (5-value vocab) + new canonical_market_phase_log
+    audit ledger.
+
+    This test was originally a sealed assertion that the column does NOT
+    exist; post-Slot-4 it inverts to assert presence (Pattern 87
+    discipline -- the FILE 0069 still doesn't ship the column; 0088 adds
+    it via subsequent ALTER).  V2.47 ADR amendment (Slot 5) codifies the
+    revisit narrative.
     """
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'canonical_markets'
               AND column_name = 'lifecycle_phase'
@@ -136,10 +147,11 @@ def test_canonical_markets_has_no_lifecycle_phase_column(db_pool: Any) -> None:
             """
         )
         row = cur.fetchone()
-    assert row is None, (
-        "canonical_markets must NOT have a lifecycle_phase column "
-        "(ADR-118 V2.39 Cohort 2 amendment decision #3)"
+    assert row is not None, (
+        "canonical_markets MUST have a lifecycle_phase column post-Slot-4 "
+        "(Migration 0088 R3 redistribution; ADR-118 V2.47 amendment)"
     )
+    assert row["data_type"] == "character varying"
 
 
 # =============================================================================

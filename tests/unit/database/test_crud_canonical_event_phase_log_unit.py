@@ -144,12 +144,16 @@ class TestAppendPhaseTransitionValidInputs:
 
     @patch("precog.database.crud_canonical_event_phase_log.get_cursor")
     def test_append_phase_transition_returns_int_id(self, mock_get_cursor_factory):
-        """Return type is int (cast from RealDictCursor row dict)."""
+        """Return type is int (cast from RealDictCursor row dict).
+
+        Slot 4 R8 reduction: 'resolved' is no longer in the event vocabulary;
+        use 'completed' (the value 'resolved' moved to canonical_markets).
+        """
         wire_get_cursor_mock(mock_get_cursor_factory, returning_id=12345)
 
         result = append_phase_transition(
             canonical_event_id=1,
-            new_phase="resolved",
+            new_phase="completed",
             changed_by="human:operator",
         )
 
@@ -212,11 +216,14 @@ class TestAppendPhaseTransitionNewPhaseValidation:
         sentinel test fires.  The slot-0073 #1085 finding #2 strengthening
         applied to slot 0079: side-effect-only ``# noqa: F401`` imports
         do NOT survive into the new slot.
+
+        Slot 4 R8 reduction: 'voided' moved to canonical_markets vocabulary;
+        check 'completed' (the new event-completion semantics) instead.
         """
         # This both tests and asserts the real-guard discipline.
         assert "proposed" in CANONICAL_EVENT_LIFECYCLE_PHASES
-        assert "voided" in CANONICAL_EVENT_LIFECYCLE_PHASES
-        assert len(CANONICAL_EVENT_LIFECYCLE_PHASES) == 8
+        assert "completed" in CANONICAL_EVENT_LIFECYCLE_PHASES
+        assert len(CANONICAL_EVENT_LIFECYCLE_PHASES) == 5
 
 
 # =============================================================================
@@ -266,14 +273,18 @@ class TestAppendPhaseTransitionPreviousPhaseValidation:
 
     @patch("precog.database.crud_canonical_event_phase_log.get_cursor")
     def test_each_canonical_phase_accepted_as_previous(self, mock_get_cursor_factory):
-        """Every CANONICAL_EVENT_LIFECYCLE_PHASES value valid as previous_phase too."""
+        """Every CANONICAL_EVENT_LIFECYCLE_PHASES value valid as previous_phase too.
+
+        Slot 4 R8 reduction: 'resolved' moved to canonical_markets vocabulary;
+        use 'completed' (event-completion semantics) for new_phase here.
+        """
         wire_get_cursor_mock(mock_get_cursor_factory, returning_id=1)
 
         for phase in CANONICAL_EVENT_LIFECYCLE_PHASES:
             # No raise expected.
             append_phase_transition(
                 canonical_event_id=1,
-                new_phase="resolved",
+                new_phase="completed",
                 changed_by="system:test",
                 previous_phase=phase,
             )

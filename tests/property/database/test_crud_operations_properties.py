@@ -117,9 +117,7 @@ class TestGameStateChangedReflexivity:
             "game_status": game_status,
         }
 
-        result = game_state_changed(
-            current, home_score, away_score, period, game_status, situation=None
-        )
+        result = game_state_changed(current, home_score, away_score, period, situation=None)
 
         assert result is False
 
@@ -148,7 +146,7 @@ class TestGameStateChangedReflexivity:
             "situation": situation,
         }
 
-        result = game_state_changed(current, home_score, away_score, period, game_status, situation)
+        result = game_state_changed(current, home_score, away_score, period, situation)
 
         assert result is False
 
@@ -174,8 +172,8 @@ class TestGameStateChangedReflexivity:
             "game_status": game_status,
         }
 
-        result1 = game_state_changed(current, home_score, away_score, period, game_status)
-        result2 = game_state_changed(current, home_score, away_score, period, game_status)
+        result1 = game_state_changed(current, home_score, away_score, period)
+        result2 = game_state_changed(current, home_score, away_score, period)
 
         assert result1 == result2
 
@@ -205,7 +203,7 @@ class TestGameStateChangedNoneCurrentState:
         situation: dict | None,
     ) -> None:
         """When current state is None, should always return True (new game)."""
-        result = game_state_changed(None, home_score, away_score, period, game_status, situation)
+        result = game_state_changed(None, home_score, away_score, period, situation)
 
         assert result is True
 
@@ -244,7 +242,7 @@ class TestGameStateChangedScoreChanges:
             "game_status": game_status,
         }
 
-        result = game_state_changed(current, new_home, away_score, period, game_status)
+        result = game_state_changed(current, new_home, away_score, period)
 
         assert result is True
 
@@ -274,7 +272,7 @@ class TestGameStateChangedScoreChanges:
             "game_status": game_status,
         }
 
-        result = game_state_changed(current, home_score, new_away, period, game_status)
+        result = game_state_changed(current, home_score, new_away, period)
 
         assert result is True
 
@@ -313,18 +311,25 @@ class TestGameStateChangedPeriodChanges:
             "game_status": game_status,
         }
 
-        result = game_state_changed(current, home_score, away_score, new_period, game_status)
+        result = game_state_changed(current, home_score, away_score, new_period)
 
         assert result is True
 
 
 # =============================================================================
-# Property Tests: Status Changes
+# Property Tests: Status Changes (RETIRED post-Slot-4)
 # =============================================================================
 
 
+@pytest.mark.skip(
+    reason="Slot 4 (Migration 0089): game_states.game_status DROPPED; "
+    "status changes no longer trigger SCD2 row creation directly.  Status "
+    "transitions coincide with period transitions in practice (covered by "
+    "TestGameStateChangedPeriodChanges).  Test class retained as historical "
+    "witness for the pre-Slot-4 contract; cleanup epic #1155 follow-up."
+)
 class TestGameStateChangedStatusChanges:
-    """Property tests for status change detection."""
+    """Property tests for status change detection (RETIRED post-Slot-4)."""
 
     @given(
         home_score=score_strategy,
@@ -342,7 +347,7 @@ class TestGameStateChangedStatusChanges:
         current_status: str,
         new_status: str,
     ) -> None:
-        """Different game status should return True."""
+        """Different game status should return True (RETIRED post-Slot-4)."""
         assume(current_status != new_status)
 
         current = {
@@ -352,7 +357,7 @@ class TestGameStateChangedStatusChanges:
             "game_status": current_status,
         }
 
-        result = game_state_changed(current, home_score, away_score, period, new_status)
+        result = game_state_changed(current, home_score, away_score, period)
 
         assert result is True
 
@@ -395,7 +400,7 @@ class TestGameStateChangedClockInvariance:
         }
 
         # Compare with same core state but different clock (implicit)
-        result = game_state_changed(current, home_score, away_score, period, game_status)
+        result = game_state_changed(current, home_score, away_score, period)
 
         # Clock is not compared, so should return False
         assert result is False
@@ -440,9 +445,7 @@ class TestGameStateChangedSituationChanges:
 
         new_situation = {"possession": possession2}
 
-        result = game_state_changed(
-            current, home_score, away_score, period, game_status, new_situation
-        )
+        result = game_state_changed(current, home_score, away_score, period, new_situation)
 
         assert result is True
 
@@ -477,9 +480,7 @@ class TestGameStateChangedSituationChanges:
 
         new_situation = {"down": down2}
 
-        result = game_state_changed(
-            current, home_score, away_score, period, game_status, new_situation
-        )
+        result = game_state_changed(current, home_score, away_score, period, new_situation)
 
         assert result is True
 
@@ -507,9 +508,7 @@ class TestGameStateChangedSituationChanges:
         }
 
         # None situation = don't compare situations
-        result = game_state_changed(
-            current, home_score, away_score, period, game_status, situation=None
-        )
+        result = game_state_changed(current, home_score, away_score, period, situation=None)
 
         assert result is False
 
@@ -526,13 +525,7 @@ class TestGameStateChangedReturnType:
     @settings(max_examples=100)
     def test_always_returns_boolean(self, current: dict | None) -> None:
         """Function should always return a boolean."""
-        result = game_state_changed(
-            current,
-            home_score=10,
-            away_score=7,
-            period=2,
-            game_status="in_progress",
-        )
+        result = game_state_changed(current, home_score=10, away_score=7, period=2)
 
         assert isinstance(result, bool)
 
@@ -646,7 +639,7 @@ class TestGameStateChangedSportAwareProperties:
         }
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, situation, league=league
+            current, home_score, away_score, period, situation, league=league
         )
 
         assert result is False
@@ -690,7 +683,7 @@ class TestGameStateChangedSportAwareProperties:
             new_situation[key] = situation[key]
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, new_situation, league=league
+            current, home_score, away_score, period, new_situation, league=league
         )
 
         assert result is False
@@ -721,7 +714,7 @@ class TestGameStateChangedSportAwareProperties:
         }
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, situation, league="nhl"
+            current, home_score, away_score, period, situation, league="nhl"
         )
 
         assert result is False
@@ -763,7 +756,7 @@ class TestGameStateChangedSportAwareProperties:
             new_situation[key] = situation[key]
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, new_situation, league="nhl"
+            current, home_score, away_score, period, new_situation, league="nhl"
         )
 
         assert result is False
@@ -813,7 +806,7 @@ class TestGameStateChangedSportAwareProperties:
         }
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, situation, league=league
+            current, home_score, away_score, period, situation, league=league
         )
 
         assert result is False
@@ -856,7 +849,7 @@ class TestGameStateChangedSportAwareProperties:
             new_situation[key] = situation[key]
 
         result = game_state_changed(
-            current, home_score, away_score, period, game_status, new_situation, league=league
+            current, home_score, away_score, period, new_situation, league=league
         )
 
         assert result is False
@@ -891,7 +884,6 @@ class TestGameStateChangedSportAwareProperties:
             home_score,
             away_score,
             period,
-            game_status,
             situation={"possession": "home"},
             league=league,
         )
@@ -900,7 +892,6 @@ class TestGameStateChangedSportAwareProperties:
             home_score,
             away_score,
             period,
-            game_status,
             situation={"possession": "home"},
             league=league,
         )

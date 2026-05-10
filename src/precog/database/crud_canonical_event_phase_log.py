@@ -66,19 +66,36 @@ Pattern 73 SSOT discipline (CLAUDE.md Critical Pattern #8):
     Two vocabularies are SSOT-anchored at
     ``src/precog/database/constants.py``:
 
-        ``CANONICAL_EVENT_LIFECYCLE_PHASES``  -- 8-value lifecycle_phase
-                                                 vocabulary mirrored by
-                                                 (a) Migration 0070's
+        ``CANONICAL_EVENT_LIFECYCLE_PHASES``  -- 5-value lifecycle_phase
+                                                 vocabulary post-Slot-4
+                                                 (Migration 0088 R8
+                                                 reduction; was 8-value
+                                                 in Migration 0070
+                                                 + 0079 originally).
+                                                 Mirrored by (a)
                                                  canonical_events.lifecycle_phase
-                                                 CHECK and (b) Migration
-                                                 0079's two CHECKs on
+                                                 CHECK (Migration 0070,
+                                                 reduced 0088) and (b)
+                                                 canonical_event_phase_log's
+                                                 two CHECKs on
                                                  ``new_phase`` and
-                                                 ``previous_phase``.  This
-                                                 module imports the
-                                                 constant and uses it in
+                                                 ``previous_phase``
+                                                 (Migration 0079, reduced
+                                                 0088).  This module
+                                                 imports the constant
+                                                 and uses it in
                                                  real-guard ``ValueError``-
                                                  raising validation in
                                                  ``append_phase_transition()``.
+                                                 Resolution-tier states
+                                                 (suspended/settling/
+                                                 resolved/voided) moved
+                                                 to canonical_markets per
+                                                 Slot-4 R3 redistribution
+                                                 -- see
+                                                 ``CANONICAL_MARKET_LIFECYCLE_PHASES``
+                                                 in constants.py +
+                                                 ``crud_canonical_market_phase_log.py``.
 
         ``DECIDED_BY_PREFIXES``               -- 3-prefix actor taxonomy
                                                  (``human:`` / ``service:`` /
@@ -170,7 +187,10 @@ def append_phase_transition(
 
         - ``new_phase`` MUST be in ``CANONICAL_EVENT_LIFECYCLE_PHASES``
           (Pattern 73 SSOT real-guard validation; raises ``ValueError``
-          before SQL).
+          before SQL).  Post-Slot-4: this is the 5-value vocabulary
+          (proposed/listed/pre_event/live/completed); the 4 dropped
+          values (suspended/settling/resolved/voided) moved to
+          canonical_markets per R3.
         - ``previous_phase`` MUST be NULL OR in
           ``CANONICAL_EVENT_LIFECYCLE_PHASES`` (Pattern 73 SSOT).
         - ``changed_by`` MUST start with one of ``DECIDED_BY_PREFIXES``
@@ -290,7 +310,8 @@ def _validate_append_phase_transition_args(
     ``mock_get_cursor.assert_not_called()`` still pass).  Mirrors slot
     0073's ``_validate_append_match_log_args`` shape.
     """
-    # new_phase must be in the canonical 8-value vocabulary.  Pattern 73 SSOT.
+    # new_phase must be in the canonical 5-value vocabulary (post-Slot-4 R8 reduction;
+    # was 8-value pre-0088).  Pattern 73 SSOT.
     if new_phase not in CANONICAL_EVENT_LIFECYCLE_PHASES:
         raise ValueError(
             f"new_phase {new_phase!r} not in canonical "

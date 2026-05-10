@@ -750,9 +750,10 @@ def test_append_phase_transition_then_read_via_get_phase_history(db_pool: Any) -
 
     try:
         # The seed already created 1 row from the trigger; add 1 more manually.
+        # Slot 4 R8: 'resolved' moved to canonical_markets vocab; use 'completed'.
         log_id = append_phase_transition(
             canonical_event_id=seeded_event_id,
-            new_phase="resolved",
+            new_phase="completed",
             changed_by="human:eric",
             previous_phase="live",
             note=f"final ({suffix})",

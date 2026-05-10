@@ -7,6 +7,21 @@ Covers game_states SCD Type 2 and the games dimension (both live in crud_game_st
 - update_game_result (derived final-score fields)
 - game_state_changed (change detection, incl. sport-aware filtering)
 - find_game_by_matchup (league-to-sport mapping + lookup)
+- derive_game_status (Slot 4 SSOT helper -- new)
+
+Slot 4 (Migration 0089) note:
+    ``game_states.game_status`` was DROPPED.  ``upsert_game_state`` /
+    ``create_game_state`` / ``game_state_changed`` no longer accept
+    a ``game_status`` kwarg.  Tests below were updated en-masse to
+    drop the kwarg + drop ``game_status`` keys from ``current`` row
+    fixtures.  Status-change-detection assertions were rewritten to
+    exercise score / period / situation deltas (the remaining 3 SCD2
+    change-detection signals).
+
+    ``get_or_create_game(... game_status=...)`` calls remain unchanged
+    -- that function writes to the ``games`` table (NOT game_states),
+    and Slot 4 deliberately preserves ``games.game_status`` as the
+    authoritative source.
 """
 
 from datetime import UTC, date, datetime
@@ -19,6 +34,7 @@ from precog.database.crud_game_states import (
     LEAGUE_SPORT_CATEGORY,
     TRACKED_SITUATION_KEYS,
     create_game_state,
+    derive_game_status,
     find_game_by_matchup,
     game_state_changed,
     get_current_game_state,
@@ -51,7 +67,6 @@ class TestCreateGameStateUnit:
             venue_id=42,
             home_score=0,
             away_score=0,
-            game_status="pre",
             league="nfl",
         )
 
@@ -68,7 +83,7 @@ class TestCreateGameStateUnit:
 
         situation = {"possession": "KC", "down": 2, "distance": 7, "yardLine": 35}
 
-        create_game_state(espn_event_id="401547417", situation=situation, game_status="in_progress")
+        create_game_state(espn_event_id="401547417", situation=situation)
 
         # Verify JSON serialization in params
         # create_game_state makes 1 execute call: INSERT RETURNING id
@@ -108,7 +123,6 @@ class TestCreateGameStateUnit:
 
         create_game_state(
             espn_event_id="401547417",
-            game_status="pre",
             league="nfl",
             game_id=42,
         )
@@ -215,7 +229,6 @@ class TestUpsertGameStateUnit:
             espn_event_id="401547417",
             home_score=7,
             away_score=3,
-            game_status="in_progress",
             skip_if_unchanged=False,  # Bypass state check to avoid DB call
         )
 
@@ -237,10 +250,15 @@ class TestGetLiveGamesUnit:
 
     @patch("precog.database.crud_game_states.fetch_all")
     def test_get_live_games_filters_in_progress(self, mock_fetch_all):
-        """Test get_live_games filters by in_progress status."""
+        """Test get_live_games filters by in_progress status.
+
+        Slot 4 (Migration 0089): get_live_games now reads
+        ``g.game_status = 'in_progress'`` via INNER JOIN to the games
+        table (the authoritative source post-column-drop).
+        """
         mock_fetch_all.return_value = [
-            {"espn_event_id": "1", "game_status": "in_progress"},
-            {"espn_event_id": "2", "game_status": "in_progress"},
+            {"espn_event_id": "1"},
+            {"espn_event_id": "2"},
         ]
 
         result = get_live_games()
@@ -248,7 +266,10 @@ class TestGetLiveGamesUnit:
         assert len(result) == 2
         call_args = mock_fetch_all.call_args
         sql = call_args[0][0]
-        assert "game_status = 'in_progress'" in sql
+        assert "g.game_status = 'in_progress'" in sql, (
+            f"Expected JOIN-qualified games.game_status filter; got SQL: {sql}"
+        )
+        assert "INNER JOIN games g" in sql, f"Expected INNER JOIN to games table; got SQL: {sql}"
 
     @patch("precog.database.crud_game_states.fetch_all")
     def test_get_live_games_filters_by_league(self, mock_fetch_all):
@@ -484,12 +505,18 @@ class TestGameStateChangedUnit:
         We DO compare:
         - home_score, away_score: Core game state
         - period: Quarter/half transitions
-        - game_status: Pre/in_progress/halftime/final transitions
         - situation: Possession, down/distance changes (significant for NFL)
+
+        Slot 4 (Migration 0089): game_status was DROPPED from game_states;
+        change-detection no longer compares it.  In practice status
+        transitions (pre -> in_progress -> halftime -> final) coincide
+        with period transitions, so SCD2 row creation density is
+        materially unchanged.
 
     Reference:
         - Issue #234: ESPNGamePoller for Live Game State Collection
         - REQ-DATA-001: Game State Data Collection (SCD Type 2)
+        - Slot 4 build spec § 0d-bis B-1
     """
 
     def test_game_state_changed_no_current_state_returns_true(self):
@@ -500,7 +527,6 @@ class TestGameStateChangedUnit:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="pre",
         )
 
         assert result is True
@@ -512,7 +538,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
         }
 
         result = game_state_changed(
@@ -520,7 +545,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
         )
 
         assert result is False
@@ -532,7 +556,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
         }
 
         # Home team scores
@@ -541,7 +564,6 @@ class TestGameStateChangedUnit:
             home_score=21,  # Changed from 14 to 21
             away_score=7,
             period=2,
-            game_status="in_progress",
         )
 
         assert result is True
@@ -553,7 +575,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
         }
 
         # Away team scores
@@ -562,7 +583,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=14,  # Changed from 7 to 14
             period=2,
-            game_status="in_progress",
         )
 
         assert result is True
@@ -574,7 +594,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
         }
 
         # Quarter change
@@ -583,28 +602,33 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=3,  # Changed from 2 to 3
-            game_status="in_progress",
         )
 
         assert result is True
 
-    def test_game_state_changed_status_change_returns_true(self):
-        """Test that game status change is detected."""
+    def test_game_state_changed_period_zero_to_one_transition_returns_true(self):
+        """Test that pre->in_progress transition is detected via period delta.
+
+        Slot 4 (Migration 0089): game_status was DROPPED, but in practice
+        the pre->in_progress transition coincides with period 0->1 (first
+        snap of the game), so SCD2 row creation density is materially
+        unchanged.  This test exercises that period-driven detection path
+        (which previously was redundant with the game_status comparison
+        but is now load-bearing).
+        """
 
         current = {
-            "home_score": 14,
-            "away_score": 7,
-            "period": 2,
-            "game_status": "in_progress",
+            "home_score": 0,
+            "away_score": 0,
+            "period": 0,
         }
 
-        # Halftime
+        # First snap: period 0 -> 1
         result = game_state_changed(
             current=current,
-            home_score=14,
-            away_score=7,
-            period=2,
-            game_status="halftime",  # Changed from in_progress
+            home_score=0,
+            away_score=0,
+            period=1,  # Changed from 0 to 1
         )
 
         assert result is True
@@ -616,7 +640,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "KC", "down": 1, "distance": 10},
         }
 
@@ -626,7 +649,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"possession": "DEN", "down": 1, "distance": 10},  # Changed
         )
 
@@ -639,7 +661,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "KC", "down": 1, "distance": 10},
         }
 
@@ -649,7 +670,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"possession": "KC", "down": 2, "distance": 7},  # Changed
         )
 
@@ -662,7 +682,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"is_red_zone": False},
         }
 
@@ -672,7 +691,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"is_red_zone": True},  # Changed
         )
 
@@ -685,7 +703,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "KC", "down": 2, "distance": 7},
         }
 
@@ -694,7 +711,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"possession": "KC", "down": 2, "distance": 7},  # Same
         )
 
@@ -707,7 +723,6 @@ class TestGameStateChangedUnit:
             "home_score": 0,
             "away_score": 0,
             "period": 1,
-            "game_status": "pre",
             "situation": None,
         }
 
@@ -716,7 +731,6 @@ class TestGameStateChangedUnit:
             home_score=0,
             away_score=0,
             period=1,
-            game_status="in_progress",  # Status changed
             situation={"possession": "KC", "down": 1, "distance": 10},
         )
 
@@ -729,7 +743,7 @@ class TestGameStateChangedUnit:
             We explicitly DO NOT track clock_seconds changes because:
             - Clock changes every few seconds during live play
             - Tracking clock would create ~1000+ rows per game
-            - Score, period, status, and situation capture meaningful state
+            - Score, period, and situation capture meaningful state
 
             This test verifies the design decision from Issue #234.
         """
@@ -738,7 +752,6 @@ class TestGameStateChangedUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "clock_seconds": 845,  # This should be ignored
         }
 
@@ -748,7 +761,6 @@ class TestGameStateChangedUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             # clock_seconds is not a parameter of game_state_changed
         )
 
@@ -793,7 +805,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "KC", "down": 1, "distance": 10},
         }
         result = game_state_changed(
@@ -801,7 +812,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"possession": "KC", "down": 2, "distance": 7},
             league="nfl",
         )
@@ -813,7 +823,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 14,
             "away_score": 7,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "KC", "down": 1, "distance": 10, "home_timeouts": 3},
         }
         result = game_state_changed(
@@ -821,7 +830,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=14,
             away_score=7,
             period=2,
-            game_status="in_progress",
             situation={"possession": "KC", "down": 1, "distance": 10, "home_timeouts": 2},
             league="ncaaf",
         )
@@ -835,7 +843,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 55,
             "away_score": 52,
             "period": 3,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "home_fouls": 3, "away_fouls": 2, "bonus": None},
         }
         result = game_state_changed(
@@ -843,7 +850,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=55,
             away_score=52,
             period=3,
-            game_status="in_progress",
             situation={"possession": "home", "home_fouls": 4, "away_fouls": 2, "bonus": None},
             league="nba",
         )
@@ -855,7 +861,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 55,
             "away_score": 52,
             "period": 3,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "bonus": None, "home_fouls": 4},
         }
         result = game_state_changed(
@@ -863,7 +868,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=55,
             away_score=52,
             period=3,
-            game_status="in_progress",
             situation={"possession": "home", "bonus": "home", "home_fouls": 5},
             league="nba",
         )
@@ -875,7 +879,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 40,
             "away_score": 38,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "possession_arrow": "home"},
         }
         result = game_state_changed(
@@ -883,7 +886,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=40,
             away_score=38,
             period=2,
-            game_status="in_progress",
             situation={"possession": "home", "possession_arrow": "away"},
             league="ncaab",
         )
@@ -895,7 +897,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 55,
             "away_score": 52,
             "period": 3,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "home_fouls": 3},
         }
         result = game_state_changed(
@@ -903,7 +904,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=55,
             away_score=52,
             period=3,
-            game_status="in_progress",
             situation={"possession": "away", "home_fouls": 3},
             league="nba",
         )
@@ -915,7 +915,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 30,
             "away_score": 28,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "home_timeouts": 3},
         }
         # Only timeouts changed - should NOT trigger (timeouts are noise)
@@ -924,7 +923,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=30,
             away_score=28,
             period=2,
-            game_status="in_progress",
             situation={"possession": "home", "home_timeouts": 2},
             league="wnba",
         )
@@ -938,7 +936,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 2,
             "away_score": 1,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {
                 "home_shots": 15,
                 "away_shots": 12,
@@ -951,7 +948,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=2,
             away_score=1,
             period=2,
-            game_status="in_progress",
             situation={
                 "home_shots": 18,
                 "away_shots": 14,
@@ -968,7 +964,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 2,
             "away_score": 1,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"home_powerplay": False, "away_powerplay": False, "home_shots": 15},
         }
         result = game_state_changed(
@@ -976,7 +971,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=2,
             away_score=1,
             period=2,
-            game_status="in_progress",
             situation={"home_powerplay": True, "away_powerplay": False, "home_shots": 16},
             league="nhl",
         )
@@ -988,7 +982,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 2,
             "away_score": 1,
             "period": 2,
-            "game_status": "in_progress",
             "situation": {"home_powerplay": False, "away_powerplay": False},
         }
         result = game_state_changed(
@@ -996,7 +989,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=2,
             away_score=1,
             period=2,
-            game_status="in_progress",
             situation={"home_powerplay": False, "away_powerplay": True},
             league="nhl",
         )
@@ -1010,7 +1002,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 10,
             "away_score": 8,
             "period": 1,
-            "game_status": "in_progress",
             "situation": {"some_field": "a", "other_field": "b"},
         }
         # Changing any field should trigger with unknown league
@@ -1019,7 +1010,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=10,
             away_score=8,
             period=1,
-            game_status="in_progress",
             situation={"some_field": "a", "other_field": "c"},
             league="cricket",
         )
@@ -1031,7 +1021,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 10,
             "away_score": 8,
             "period": 1,
-            "game_status": "in_progress",
             "situation": {"some_field": "a"},
         }
         result = game_state_changed(
@@ -1039,7 +1028,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=10,
             away_score=8,
             period=1,
-            game_status="in_progress",
             situation={"some_field": "a"},
             league="cricket",
         )
@@ -1051,7 +1039,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 10,
             "away_score": 8,
             "period": 1,
-            "game_status": "in_progress",
             "situation": {"arbitrary_key": "value1"},
         }
         result = game_state_changed(
@@ -1059,7 +1046,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=10,
             away_score=8,
             period=1,
-            game_status="in_progress",
             situation={"arbitrary_key": "value2"},
             league=None,
         )
@@ -1071,7 +1057,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 10,
             "away_score": 8,
             "period": 1,
-            "game_status": "in_progress",
             "situation": {},
         }
         result = game_state_changed(
@@ -1079,7 +1064,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=10,
             away_score=8,
             period=1,
-            game_status="in_progress",
             situation={"new_key": "value"},
             league=None,
         )
@@ -1091,7 +1075,6 @@ class TestGameStateChangedSportAwareUnit:
             "home_score": 55,
             "away_score": 52,
             "period": 3,
-            "game_status": "in_progress",
             "situation": {"possession": "home", "home_timeouts": 4},
         }
         # Only timeouts changed with uppercase league - should NOT trigger
@@ -1100,7 +1083,6 @@ class TestGameStateChangedSportAwareUnit:
             home_score=55,
             away_score=52,
             period=3,
-            game_status="in_progress",
             situation={"possession": "home", "home_timeouts": 3},
             league="NBA",
         )
@@ -1280,3 +1262,132 @@ class TestFindGameByMatchupUnit:
         call_args = mock_fetch_one.call_args[0]
         params = call_args[1]
         assert params == ("basketball", target_date, "LAL", "GSW")
+
+
+# =============================================================================
+# Slot 4 (Migration 0089) -- derive_game_status SSOT helper unit tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestDeriveGameStatusUnit:
+    """Unit tests for derive_game_status (Slot 4 SSOT helper).
+
+    The helper reconstructs sport-tier game_status for a specific
+    game_states row from period + clock_seconds + situation + parent
+    games.game_status (when known).  Pattern 73 SSOT: this is the
+    canonical entry point for status derivation post-Migration-0089.
+
+    Disambiguation rules (priority order):
+        1. parent_game_status terminal -> propagate
+        2. situation['period_complete'] = True -> 'end_of_period'
+        3. period >= 2 + clock_seconds == 0 -> 'halftime'
+        4. period >= 1 + clock_seconds not None -> 'in_progress'
+        5. default -> 'pre'
+    """
+
+    def test_u1_derive_game_status_terminal_from_parent_final(self):
+        """Rule 1: parent='final' -> 'final' regardless of period/clock."""
+        result = derive_game_status({"period": 4, "clock_seconds": 120}, parent_game_status="final")
+        assert result == "final"
+
+    def test_u2_derive_game_status_terminal_from_parent_final_ot(self):
+        """Rule 1: parent='final_ot' -> 'final_ot'."""
+        result = derive_game_status(
+            {"period": 5, "clock_seconds": 0}, parent_game_status="final_ot"
+        )
+        assert result == "final_ot"
+
+    def test_u3_derive_game_status_cancelled_from_parent(self):
+        """Rule 1: parent='cancelled' -> 'cancelled'."""
+        result = derive_game_status(
+            {"period": 0, "clock_seconds": None}, parent_game_status="cancelled"
+        )
+        assert result == "cancelled"
+
+    def test_u4_derive_game_status_postponed_from_parent(self):
+        """Rule 1: parent='postponed' -> 'postponed'."""
+        result = derive_game_status(
+            {"period": 0, "clock_seconds": None}, parent_game_status="postponed"
+        )
+        assert result == "postponed"
+
+    def test_u5_derive_game_status_delayed_from_parent(self):
+        """Rule 1: parent='delayed' -> 'delayed'."""
+        result = derive_game_status(
+            {"period": 1, "clock_seconds": 600}, parent_game_status="delayed"
+        )
+        assert result == "delayed"
+
+    def test_u6_derive_game_status_end_of_period_from_situation(self):
+        """Rule 2: situation['period_complete']=True -> 'end_of_period'.
+
+        Higher priority than rule 3 (halftime) for ESPN explicit signal.
+        """
+        result = derive_game_status(
+            {"period": 1, "clock_seconds": 0, "situation": {"period_complete": True}},
+        )
+        assert result == "end_of_period"
+
+    def test_u7_derive_game_status_halftime_from_period_2_clock_zero(self):
+        """Rule 3: period=2, clock_seconds=0, no period_complete signal -> 'halftime'."""
+        result = derive_game_status({"period": 2, "clock_seconds": 0})
+        assert result == "halftime"
+
+    def test_u8_derive_game_status_in_progress_from_period_clock(self):
+        """Rule 4: period=1, clock_seconds=600 -> 'in_progress'."""
+        result = derive_game_status({"period": 1, "clock_seconds": 600})
+        assert result == "in_progress"
+
+    def test_u9_derive_game_status_pre_default(self):
+        """Rule 5: period=0, clock_seconds=None, parent=None -> 'pre'."""
+        result = derive_game_status({"period": 0, "clock_seconds": None})
+        assert result == "pre"
+
+    def test_u10_derive_game_status_returns_only_valid_enum_value(self):
+        """Across all paths, returned value is in the 10-value sport-tier vocabulary."""
+        valid = {
+            "pre",
+            "in_progress",
+            "halftime",
+            "end_of_period",
+            "final",
+            "final_ot",
+            "delayed",
+            "postponed",
+            "cancelled",
+            "suspended",
+        }
+        # Exercise all rule paths
+        cases = [
+            ({"period": 4}, "final"),
+            ({"period": 5, "clock_seconds": 0}, "final_ot"),
+            ({"period": 0, "clock_seconds": None}, "cancelled"),
+            ({"period": 0}, "postponed"),
+            ({"period": 1, "clock_seconds": 600}, "delayed"),
+            ({"period": 1, "clock_seconds": 0, "situation": {"period_complete": True}}, None),
+            ({"period": 2, "clock_seconds": 0}, None),
+            ({"period": 1, "clock_seconds": 600}, None),
+            ({"period": 0, "clock_seconds": None}, None),
+            ({"period": 0}, None),
+        ]
+        for row, parent in cases:
+            result = derive_game_status(row, parent_game_status=parent)
+            assert result in valid, (
+                f"derive_game_status({row}, parent={parent}) returned {result!r}, "
+                f"not in valid sport-tier vocabulary"
+            )
+
+    def test_derive_game_status_decimal_clock_seconds(self):
+        """clock_seconds as Decimal (the production type) is handled correctly."""
+        result = derive_game_status({"period": 2, "clock_seconds": Decimal("0")})
+        assert result == "halftime"
+
+    def test_derive_game_status_terminal_overrides_period_clock_signals(self):
+        """Rule 1 wins over rules 2-4 even when row signals suggest otherwise."""
+        # Row looks like in_progress, but parent says cancelled -> rule 1 wins.
+        result = derive_game_status(
+            {"period": 3, "clock_seconds": 300, "situation": {"period_complete": False}},
+            parent_game_status="cancelled",
+        )
+        assert result == "cancelled"

@@ -1,6 +1,109 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0087, verified=2026-05-07, tables=62, migrations=83, last_changelog_migration=0087 -->
+<!-- FRESHNESS: alembic_head=0089, verified=2026-05-09, tables=63, migrations=85, last_changelog_migration=0089 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0087 -> 0089 (V2.4 amended-in-place, 2026-05-09):
+
+Cleanup epic Slot 4 -- canonical-tier lifecycle_phase redistribution +
+sport-tier denorm cleanup (R3 + R6 + R8 + R5' from session 98 cleanup-
+epic R6 council synthesis; ADR-118 V2.47 amendment codifies the rule
+at Slot 5 / session 99):
+
+Migration 0088 (cleanup epic Slot 4, session 99) -- canonical-tier
+lifecycle_phase redistribution + canonical_market_phase_log audit
+ledger.
+
+Schema mutations (8-step ordered transaction):
+
+  1. ADD COLUMN canonical_markets.lifecycle_phase VARCHAR(32) NOT NULL
+     DEFAULT 'open' + 5-value CHECK ('open', 'suspended', 'settling',
+     'resolved', 'voided').  R3 redistribution -- canonical_markets at 0
+     rows MCP-verified.
+  2-4. REDUCE canonical_events.lifecycle_phase + canonical_event_phase_log
+     new_phase + previous_phase CHECK from 8 values to 5 (drop suspended/
+     settling/resolved/voided; add 'completed').  R8 bundle -- mirror
+     reduction maintains V2.40 Item 3 mirror-CHECK invariant.
+  5. CREATE TABLE canonical_market_phase_log (mirror slot 0079 shape:
+     8 columns + FK ON DELETE CASCADE + 2 inline CHECKs).
+  6. CREATE INDEX × 3 (transition_at DESC; canonical_market_id;
+     composite (canonical_market_id, transition_at DESC)).
+  7. CREATE FUNCTION log_canonical_market_phase_transition() (mirror
+     slot 0079 verbatim per build spec § 0d D-2: AFTER trigger semantics
+     + IS DISTINCT FROM NULL-safe + 'system:trigger' from
+     DECIDED_BY_PREFIXES system: family).  COMMENT ON FUNCTION present.
+  8. CREATE TRIGGER trg_canonical_markets_log_phase_transition AFTER
+     INSERT OR UPDATE OF lifecycle_phase ON canonical_markets.
+
+SSOT helpers (Pattern 73):
+
+  - constants.py reduces CANONICAL_EVENT_LIFECYCLE_PHASES 8->5 + adds
+    new CANONICAL_MARKET_LIFECYCLE_PHASES 5-tuple.  Five-way parity test
+    in tests/integration/database/test_lifecycle_phase_vocabulary_ssot.py
+    extends 3-way -> 5-way (event-vocab parity + market-vocab parity +
+    disjointness invariant).
+  - crud_canonical_market_phase_log.py NEW module mirrors slot 0079
+    shape, including append_market_phase_transition() write API per Q12
+    full-mirror discipline.
+  - crud_canonical_markets.py extended with
+    update_canonical_market_lifecycle_phase() Pattern 73 SSOT entry
+    point + lifecycle_phase column projected in read paths.
+
+Migration 0089 (cleanup epic Slot 4, session 99) -- DROP COLUMN
+game_states.game_status (R5' sport-tier denorm cleanup).
+
+Schema mutations:
+
+  - DROP VIEW current_game_states (slot 0044 precedent: SELECT * view
+    blocks DROP COLUMN; drop + recreate dance).
+  - ALTER TABLE game_states DROP COLUMN game_status (CASCADE drops
+    game_states_game_status_check inline CHECK constraint).
+  - CREATE OR REPLACE VIEW current_game_states AS SELECT * FROM
+    game_states WHERE row_current_ind = TRUE (column naturally absent
+    post-drop).
+
+Authoritative status now lives at games.game_status (5,199 of 5,199
+rows MCP-verified at session 99 build time -- 100% population
+independent of game_states).  Per-game_states-row status semantics
+(rare; needed only for live-poller-tick anomalies) reconstruct via
+new derive_game_status() SSOT helper in crud_game_states.py
+(5-rule disambiguation: terminal-parent override / ESPN
+period_complete signal / period>=2 + clock=0 halftime / period>=1 +
+clock != None in_progress / pre default).
+
+Python projection cascade (Slot 4 build spec § 0d-bis B-1): drop
+``game_status`` kwarg from upsert_game_state / create_game_state /
+game_state_changed function signatures + 2 production callers
+(espn_game_poller.py:1418 ``upsert_game_state`` + seeding_manager.py:765
+``upsert_game_state``).  espn_game_poller.py:1393 (passes
+game_status to get_or_create_game writing to games table) preserved
+per build spec § 0d-bis B-2 table-target verification.  ~10 test
+files cascaded.  get_live_games() rewritten to JOIN games table for
+the in_progress filter.
+
+SCD2 invariant survives: game_states change-detection key is
+game_state_key + period + clock_seconds + score deltas (per
+idx_game_states_game_state_key_current partial-unique index).
+game_status was never part of the cycle key.
+
+Pattern 87 reaffirmed: zero edits to migrations 0001-0087.  All
+shipped migration bodies + docstrings reflect their post-ship schema
+state and are correct, not stale.
+
+Pattern 91 V1.44 + V1.45+ chain-of-trust self-discipline: all
+build-time premises MCP-verified across 5 dispatches (D-1, D-2, D-3,
+D-4 in council/synthesis + B-1, B-2 in builder dispatches; cumulative
+N≈10 catches across session 98).  V1.45+ promotion at Slot 5
+(session 99) over-determined.
+
+Migration count 83 -> 85; table count 62 -> 63 (canonical_market_phase_log
+added; game_states.game_status column dropped within game_states).
+
+Cleanup epic forward plan: Slot 5 (V2.47 ADR amendment + R6
+redistribution rule codification + Pattern 82 V2 scope-narrowing +
+#1163 cosmetic-cleanup folding + Pattern 91 V1.45+ promotion;
+~session 99).
+
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0086 -> 0087 (V2.4 amended-in-place, 2026-05-07):
 

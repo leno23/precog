@@ -42,19 +42,19 @@ from precog.database.connection import get_cursor
 pytestmark = [pytest.mark.integration]
 
 
-# 8 canonical lifecycle phases per ADR-118 V2.39 line ~17644 inline enumeration.
-# This is the SSOT for the test side (Pattern 73 -- the migration owns it in
-# code; the test mirrors verbatim).  Drift from the migration => test fails =>
-# alignment forced.
+# 5 canonical lifecycle phases post-Slot-4 R8 reduction (Migration 0088).
+# Originally 8 values shipped in Migration 0070 (V2.40 Cohort 1 carry-forward
+# Item 3); Migration 0088 R8 bundle reduced 8->5 (resolution-tier states
+# moved to canonical_markets per R3 redistribution).  This test file
+# previously asserted the 8-value at-ship-time vocabulary; post-Slot-4 the
+# LIVE CHECK has 5 values.  Pattern 87: the FILE 0070 still ships 8 values
+# inline (immutable); the LIVE state (post-0088) has 5.
 _VALID_LIFECYCLE_PHASES: list[str] = [
     "proposed",
     "listed",
     "pre_event",
     "live",
-    "suspended",
-    "settling",
-    "resolved",
-    "voided",
+    "completed",
 ]
 
 
@@ -201,8 +201,16 @@ def test_partial_unique_index_does_not_block_domain_scoped_duplicates(
 # =============================================================================
 
 
-def test_lifecycle_phase_check_constraint_exists_with_8_values(db_pool: Any) -> None:
-    """``canonical_events_lifecycle_phase_check`` exists with all 8 valid phases."""
+def test_lifecycle_phase_check_constraint_exists_with_5_values_post_slot_4(
+    db_pool: Any,
+) -> None:
+    """``canonical_events_lifecycle_phase_check`` exists with the 5 valid phases (post-0088 R8).
+
+    Originally Migration 0070 shipped this CHECK with 8 values; Migration 0088
+    (Slot 4 R8 bundle) reduced to 5.  This test asserts the LIVE CHECK shape
+    (post-0088); historical at-ship-time shape is asserted in
+    test_constants_unit.py per Pattern 87 file-immutability.
+    """
     with get_cursor() as cur:
         cur.execute(
             """
@@ -213,11 +221,14 @@ def test_lifecycle_phase_check_constraint_exists_with_8_values(db_pool: Any) -> 
             """
         )
         row = cur.fetchone()
-    assert row is not None, "canonical_events_lifecycle_phase_check missing post-0070"
+    assert row is not None, (
+        "canonical_events_lifecycle_phase_check missing post-0070 (and reduced post-0088)"
+    )
     check_def = row["def"]
     for phase in _VALID_LIFECYCLE_PHASES:
         assert phase in check_def, (
-            f"CHECK constraint must include phase {phase!r}; got: {check_def}"
+            f"CHECK constraint must include phase {phase!r} (post-Slot-4 5-value vocab); "
+            f"got: {check_def}"
         )
 
 
@@ -226,7 +237,7 @@ def test_lifecycle_phase_check_accepts_each_valid_phase(
     db_pool: Any,
     phase: str,
 ) -> None:
-    """INSERT canonical_events with each of the 8 valid phases must succeed."""
+    """INSERT canonical_events with each valid phase must succeed (post-Slot-4 5-value vocab)."""
     suffix = uuid.uuid4().hex[:8]
     nk_hash = f"TEST-1012-lp-ok-{phase}-{suffix}".encode()
 

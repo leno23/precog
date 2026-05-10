@@ -6,6 +6,25 @@ Tables covered:
     - game_states: SCD Type 2 versioned live game state snapshots
     - games: Canonical game dimension table (ESPN-sourced)
     - game_odds: Pre-game and in-game odds from sportsbooks
+
+Slot 4 (Migration 0089) note:
+    ``game_states.game_status`` was DROPPED in Migration 0089 (R5'
+    sport-tier denorm cleanup, cleanup epic #1155).  Authoritative source
+    of game-status semantics is now ``games.game_status`` (5,199 of 5,199
+    rows MCP-verified at session 99 build time -- 100% population
+    independent of game_states).
+
+    For per-game_states-row status semantics (rare; needed only when a
+    specific tick's status differs from the parent game's current
+    status), use the new ``derive_game_status()`` SSOT helper which
+    reconstructs status from ``period`` + ``clock_seconds`` +
+    ``linescores`` + ``situation`` JSONB + parent ``games.game_status``.
+
+    The ``upsert_game_state`` / ``create_game_state`` / ``game_state_changed``
+    function signatures NO LONGER accept a ``game_status`` kwarg
+    (cascade per Slot 4 build spec § 0d-bis B-1).  SCD2 change detection
+    is unchanged: keys are ``game_state_key + period + clock_seconds +
+    score deltas`` per the partial-unique index.
 """
 
 import json
@@ -81,7 +100,6 @@ def create_game_state(
     period: int = 0,
     clock_seconds: Decimal | None = None,
     clock_display: str | None = None,
-    game_status: str = "pre",
     game_date: datetime | None = None,
     broadcast: str | None = None,
     neutral_site: bool = False,
@@ -99,6 +117,11 @@ def create_game_state(
     Use this for NEW games only. For updates, use upsert_game_state()
     which handles SCD Type 2 versioning (closes old row, creates new).
 
+    Slot 4 (Migration 0089): ``game_status`` kwarg DROPPED -- column
+    no longer exists on game_states.  Authoritative status lives at
+    ``games.game_status``; per-row derived status via
+    ``derive_game_status()``.
+
     Args:
         espn_event_id: ESPN event identifier (natural key)
         home_team_id: Foreign key to teams.team_id for home team
@@ -109,7 +132,6 @@ def create_game_state(
         period: Current period (0=pregame, 1-4=regulation, 5+=OT)
         clock_seconds: Seconds remaining in period
         clock_display: Human-readable clock (e.g., "5:32")
-        game_status: Status ('pre', 'in_progress', 'halftime', 'final', etc.)
         game_date: Scheduled game start time
         broadcast: TV broadcast info
         neutral_site: TRUE for neutral venue games
@@ -141,7 +163,6 @@ def create_game_state(
         ...     home_team_id=1,
         ...     away_team_id=2,
         ...     venue_id=1,
-        ...     game_status="pre",
         ...     game_date=datetime(2024, 11, 28, 16, 30),
         ...     league="nfl",
         ...     season_type="regular",
@@ -166,17 +187,18 @@ def create_game_state(
     temp_game_state_key = f"TEMP-{uuid.uuid4()}"
 
     # Migration 0062: game_state_key added (two-step: TEMP → GST-{id}).
+    # Migration 0089 (Slot 4): game_status column DROPPED.
     insert_query = """
         INSERT INTO game_states (
             espn_event_id, home_team_id, away_team_id, venue_id,
             home_score, away_score, period, clock_seconds, clock_display,
-            game_status, game_date, broadcast, neutral_site,
+            game_date, broadcast, neutral_site,
             season_type, week_number, league, situation, linescores,
             data_source, game_id, league_id, game_state_key,
             row_current_ind, row_start_ts
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, TRUE, NOW()
         )
         RETURNING id
@@ -194,7 +216,6 @@ def create_game_state(
                 period,
                 clock_seconds,
                 clock_display,
-                game_status,
                 game_date,
                 broadcast,
                 neutral_site,
@@ -260,7 +281,6 @@ def game_state_changed(
     home_score: int,
     away_score: int,
     period: int,
-    game_status: str,
     situation: dict | None = None,
     league: str | None = None,
 ) -> bool:
@@ -270,6 +290,17 @@ def game_state_changed(
     Used by upsert_game_state to avoid creating duplicate SCD Type 2 rows
     when game state hasn't changed. This reduces database bloat during
     high-frequency polling (e.g., every 15-30 seconds during live games).
+
+    Slot 4 (Migration 0089): ``game_status`` kwarg DROPPED -- column
+    no longer exists on game_states.  Status-transition tracking is now
+    the responsibility of ``games.game_status`` (authoritative; updated
+    by the ESPN poller's ``get_or_create_game()`` call when the status
+    flips).  ``game_state_changed`` now relies on the remaining 3
+    change-detection signals: score deltas, period transitions, and
+    sport-aware situation deltas.  In practice, status transitions
+    (pre -> in_progress -> halftime -> final) coincide with period
+    deltas (period=0 -> 1 -> 2 etc) so SCD2 row creation density is
+    materially unchanged.
 
     Sport-aware situation comparison:
         When league is provided, only sport-relevant situation keys are
@@ -284,7 +315,6 @@ def game_state_changed(
         home_score: New home team score
         away_score: New away team score
         period: New period number
-        game_status: New game status
         situation: New situation data (downs, possession, etc.)
         league: League code (e.g., "nfl", "nba", "nhl") for sport-aware
             situation filtering. None falls back to full comparison.
@@ -297,23 +327,23 @@ def game_state_changed(
         We intentionally DO NOT compare clock_seconds or clock_display because:
         - Clock changes every few seconds during play
         - This would create ~1000+ rows per game instead of ~50-100
-        - Score, period, status, and situation changes are what matter for trading
+        - Score, period, and situation changes are what matter for trading
 
         We DO compare:
         - home_score, away_score: Core game state
         - period: Quarter/half transitions
-        - game_status: Pre/in_progress/halftime/final transitions
         - situation: Sport-specific keys only (see TRACKED_SITUATION_KEYS)
 
     Example:
         >>> current = get_current_game_state("401547417")
-        >>> if game_state_changed(current, 14, 7, 2, "in_progress", {"possession": "KC"}, league="nfl"):
+        >>> if game_state_changed(current, 14, 7, 2, {"possession": "KC"}, league="nfl"):
         ...     upsert_game_state("401547417", home_score=14, ...)
 
     References:
         - Issue #234: State Change Detection requirement
         - Issue #397: Game states SCD noise tuning
         - REQ-DATA-001: Game State Data Collection
+        - Slot 4 build spec § 0d-bis B-1 (game_status kwarg cascade)
     """
     # No current state = always insert (new game)
     if current is None:
@@ -325,8 +355,6 @@ def game_state_changed(
     if current.get("away_score") != away_score:
         return True
     if current.get("period") != period:
-        return True
-    if current.get("game_status") != game_status:
         return True
 
     # Compare situation (JSONB field) if provided
@@ -363,7 +391,6 @@ def upsert_game_state(
     period: int = 0,
     clock_seconds: Decimal | None = None,
     clock_display: str | None = None,
-    game_status: str = "pre",
     game_date: datetime | None = None,
     broadcast: str | None = None,
     neutral_site: bool = False,
@@ -384,11 +411,17 @@ def upsert_game_state(
 
     This is the primary function for updating live game data from ESPN API.
 
+    Slot 4 (Migration 0089): ``game_status`` kwarg DROPPED -- column
+    no longer exists on game_states.  Authoritative status lives at
+    ``games.game_status`` (updated by the ESPN poller's
+    ``get_or_create_game()`` call); per-row derived status via
+    ``derive_game_status()`` helper.
+
     Args:
         (same as create_game_state)
         data_source: Source of game data (default: 'espn')
         skip_if_unchanged: If True, skip update when state hasn't meaningfully
-            changed (score, period, status, situation). Default True.
+            changed (score, period, situation). Default True.
             Set to False to always create a new row (legacy behavior).
 
     Returns:
@@ -406,8 +439,11 @@ def upsert_game_state(
         changed before creating a new row. This prevents database bloat from
         high-frequency polling (~1000 rows/game -> ~50-100 rows/game).
 
-        "Meaningful" changes include: score, period, game_status, situation.
+        "Meaningful" changes include: score, period, situation.
         Clock changes are intentionally ignored (changes every few seconds).
+        Status transitions (Slot 4 post-Migration 0089) coincide with
+        period deltas in practice, so SCD2 row creation density is
+        materially unchanged.
 
     Example:
         >>> # Update score during game
@@ -417,7 +453,6 @@ def upsert_game_state(
         ...     away_score=3,
         ...     period=1,
         ...     clock_display="5:32",
-        ...     game_status="in_progress",
         ...     situation={"possession": "KC", "down": 2, "distance": 7}
         ... )
         >>> if state_id is None:
@@ -429,11 +464,13 @@ def upsert_game_state(
         - Pattern 2: Dual Versioning System
     """
     # State change detection (Issue #234)
-    # Check if meaningful state has changed before creating a new SCD row
+    # Check if meaningful state has changed before creating a new SCD row.
+    # Slot 4 (Migration 0089): game_status no longer compared (column dropped);
+    # status transitions coincide with period transitions in practice.
     if skip_if_unchanged:
         current = get_current_game_state(espn_event_id)
         if not game_state_changed(
-            current, home_score, away_score, period, game_status, situation, league=league
+            current, home_score, away_score, period, situation, league=league
         ):
             # No meaningful change - return None to indicate skip
             return None
@@ -484,17 +521,18 @@ def upsert_game_state(
     # path the caller provides the existing key (carried forward from the
     # locked row); on first-insert path we send a uniquely-generated TEMP
     # sentinel and replace it with ``GST-{id}`` after RETURNING id.
+    # Migration 0089 (Slot 4): game_status column DROPPED.
     insert_query = """
         INSERT INTO game_states (
             espn_event_id, home_team_id, away_team_id, venue_id,
             home_score, away_score, period, clock_seconds, clock_display,
-            game_status, game_date, broadcast, neutral_site,
+            game_date, broadcast, neutral_site,
             season_type, week_number, league, situation, linescores,
             data_source, game_id, league_id, game_state_key,
             row_current_ind, row_start_ts
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, TRUE, %s
         )
         RETURNING id
@@ -572,7 +610,6 @@ def upsert_game_state(
                     period,
                     clock_seconds,
                     clock_display,
-                    game_status,
                     game_date,
                     broadcast,
                     neutral_site,
@@ -670,8 +707,16 @@ def get_live_games(
         >>> games = get_live_games(league="nfl")
         >>> for g in games:
         ...     print(f"{g['home_team_code']} vs {g['away_team_code']}")
+
+    Slot 4 (Migration 0089): the ``in_progress`` filter now reads from
+    ``games.game_status`` (authoritative) via JOIN, since
+    ``game_states.game_status`` was DROPPED.  ``games.game_status`` is
+    updated by the ESPN poller's ``get_or_create_game()`` /
+    ``update_game_result()`` paths and reflects the latest status of
+    the parent game (1:1 with the live game's true state, NOT a
+    per-tick echo).
     """
-    conditions = ["gs.row_current_ind = TRUE", "gs.game_status = 'in_progress'"]
+    conditions = ["gs.row_current_ind = TRUE", "g.game_status = 'in_progress'"]
     params: list[Any] = []
 
     if league:
@@ -688,6 +733,7 @@ def get_live_games(
         LEFT JOIN teams th ON gs.home_team_id = th.team_id
         LEFT JOIN teams ta ON gs.away_team_id = ta.team_id
         LEFT JOIN venues v ON gs.venue_id = v.venue_id
+        INNER JOIN games g ON gs.game_id = g.id
         WHERE {" AND ".join(conditions)}
         ORDER BY gs.game_date
         LIMIT %s OFFSET %s
@@ -754,6 +800,134 @@ def get_games_by_date(
 # Functions for historical_stats table (Migration 0009)
 # Used for storing player/team statistics from external data sources
 # =============================================================================
+
+
+# =============================================================================
+# Slot 4 (Migration 0089) -- derive_game_status SSOT helper
+#
+# After Migration 0089 dropped game_states.game_status, the few callers that
+# need per-game_states-row status semantics (rather than the parent game's
+# current status) must reconstruct status from the row's available signals.
+# Pattern 73 SSOT: this helper is the canonical reconstruction surface.
+# Inline status reconstruction in callers is forbidden.
+# =============================================================================
+
+
+# Sport-tier game_status vocabulary (Migration 0001 + 0070 historical CHECK).
+# Same 10 values that lived in game_states.game_status pre-Slot-4.
+_GAME_STATUS_VALUES: tuple[str, ...] = (
+    "pre",
+    "in_progress",
+    "halftime",
+    "end_of_period",
+    "final",
+    "final_ot",
+    "delayed",
+    "postponed",
+    "cancelled",
+    "suspended",
+)
+
+
+# Terminal parent-game statuses (used in derive_game_status disambiguation rule 1).
+_TERMINAL_PARENT_STATUSES: frozenset[str] = frozenset(
+    {"final", "final_ot", "cancelled", "postponed", "delayed"}
+)
+
+
+def derive_game_status(
+    game_state_row: dict[str, Any],
+    *,
+    parent_game_status: str | None = None,
+) -> str:
+    """Derive sport-tier game_status for a specific game_states row from available signals.
+
+    Reconstructs status from ``period`` + ``clock_seconds`` + ``linescores``
+    + ``situation`` JSONB + ``parent_game_status`` (if known).  Pattern 73
+    SSOT: this is the canonical entry point for status derivation
+    post-Migration-0089.  Inline status reconstruction in callers is
+    forbidden.
+
+    Disambiguation rules (priority order; first matching rule wins):
+
+        1. If ``parent_game_status`` indicates terminal state (``final``,
+           ``final_ot``, ``cancelled``, ``postponed``, ``delayed``) ->
+           propagate the parent value.  Terminal states by definition
+           override per-tick state -- if the parent says the game ended,
+           the row reflects the ended state.
+        2. If ``situation['period_complete']`` is True AND
+           ``parent_game_status`` is NOT terminal-final ->
+           ``'end_of_period'``.  ESPN signals end-of-quarter via this key.
+        3. If ``period >= 2`` AND ``clock_seconds == 0`` AND
+           ``parent_game_status`` is NOT terminal-final -> ``'halftime'``.
+           (Strictly speaking halftime is end-of-period 2; rule 2 catches
+           the ESPN explicit signal first; rule 3 is the fallback when
+           ESPN didn't set ``period_complete``.)
+        4. If ``period >= 1`` AND ``clock_seconds`` is not None ->
+           ``'in_progress'``.  Live ticks have a non-None clock value.
+        5. Default -> ``'pre'``.  Pre-game state has period=0 (or missing)
+           and no clock signal.
+
+    Edge cases:
+        - ``suspended`` and ``delayed`` cannot be inferred from
+          row-level signals alone; they require ``parent_game_status``
+          to be passed (rule 1 propagates).  Callers wanting either
+          status must read ``games.game_status`` of the parent game and
+          pass it as ``parent_game_status``.
+        - The function is conservative: when in doubt, returns ``'pre'``
+          (the safest default for a row whose status is genuinely
+          unknown).
+
+    Args:
+        game_state_row: Dict containing at least ``period`` and
+            ``clock_seconds`` keys; ``situation`` and ``linescores``
+            optional.  Typically a row dict from
+            ``get_current_game_state()`` /
+            ``get_game_state_history()``.
+        parent_game_status: Optional parent-game status from
+            ``games.game_status``.  Pass when terminal-state propagation
+            is needed (rule 1).  Default None means "no parent context;
+            derive from row signals only".
+
+    Returns:
+        One of the 10 sport-tier status values:
+        ``pre``, ``in_progress``, ``halftime``, ``end_of_period``,
+        ``final``, ``final_ot``, ``delayed``, ``postponed``,
+        ``cancelled``, ``suspended``.
+
+    Example:
+        >>> row = get_current_game_state("401547417")
+        >>> parent = get_or_create_game(...).get("game_status")
+        >>> status = derive_game_status(row, parent_game_status=parent)
+
+    Reference:
+        - Slot 4 build spec § 2 (signature + 5-rule disambiguation)
+        - Migration 0089 (column drop rationale)
+        - ``games.game_status`` (authoritative source of game-level status)
+    """
+    # Rule 1: terminal parent-game status overrides everything else.
+    if parent_game_status is not None and parent_game_status in _TERMINAL_PARENT_STATUSES:
+        return parent_game_status
+
+    period = game_state_row.get("period") or 0
+    clock_seconds = game_state_row.get("clock_seconds")
+    situation = game_state_row.get("situation") or {}
+
+    # Rule 2: ESPN explicit period_complete signal (and not already terminal).
+    if situation.get("period_complete") is True:
+        return "end_of_period"
+
+    # Rule 3: period >= 2 + clock_seconds == 0 + not terminal -> halftime.
+    # Use float() comparison to handle Decimal vs int.
+    if period >= 2 and clock_seconds is not None and float(clock_seconds) == 0.0:
+        return "halftime"
+
+    # Rule 4: live tick (period >= 1 + clock value present).
+    if period >= 1 and clock_seconds is not None:
+        return "in_progress"
+
+    # Rule 5: default to pre-game.
+    return "pre"
 
 
 # =============================================================================

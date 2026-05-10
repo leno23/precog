@@ -283,8 +283,12 @@ def create_canonical_event(
 
         ``lifecycle_phase`` defaults to ``'proposed'`` to encode the Phase
         B.5 state-machine seed state -- the matcher pipeline (Cohort 5+)
-        transitions rows to ``'matched'`` / ``'resolved'`` / ``'voided'``
-        as the event lifecycle progresses.
+        transitions rows through the post-R8 5-value canonical-event
+        vocabulary (``'proposed'`` -> ``'listed'`` -> ``'pre_event'`` ->
+        ``'live'`` -> ``'completed'``) as the underlying real-world event
+        progresses.  Resolution-tier states (``'suspended'``, ``'settling'``,
+        ``'resolved'``, ``'voided'``) live on ``canonical_markets.lifecycle_phase``
+        per session 98 R6 council redistribution (ADR-118 V2.47 codifies).
 
         ``updated_at`` is maintained automatically by the
         ``trg_canonical_events_updated_at`` BEFORE UPDATE trigger (shipped
