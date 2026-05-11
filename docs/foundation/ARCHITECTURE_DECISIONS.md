@@ -1,11 +1,97 @@
 # Architecture & Design Decisions
 
 ---
-**Version:** 2.47
+**Version:** 2.48
 **Last Updated:** May 10, 2026
 **Status:** ✅ Current
-**Supersedes:** V2.46 (preserved in-doc per amendment-text immutability; supersede-and-delete convention applies to file rename when version-number is in the filename — ADR file has stable name)
-**Session:** 99
+**Supersedes:** V2.47 (preserved in-doc per amendment-text immutability; supersede-and-delete convention applies to file rename when version-number is in the filename — ADR file has stable name)
+**Session:** 100
+**Changes in v2.48:**
+- **PLATFORM-PREFIX RENAME — DESIGN LOCK (Cohort 5+ Slot A; Migration 0090 to follow in PR-Y).** V2.48 is the design-lock amendment for the platform-prefix rename slot. It codifies the naming convention rule that ADR-118 V2.46 line 18092 explicitly bookmarked ("Rename markets → platform_markets in Phase 1. Deferred to post-Phase-3. Prose/ADR text uses platform_market naming starting now.") — V2.48 is the deferred-realization decision moving from prose-only to schema-realized. Per session 93 Galadriel + Holden 2-agent council (re-verified at session 100 against `alembic_head=0089` per Pattern 91 V1.45+ MCP-first), the rename is structurally low-risk and operationally large (~700 touch points). **No Migration ships under V2.48 itself**; Migration 0090 ships separately as PR-Y per the V2.48 § F adjudication that ADR-text ships in its own PR ahead of the migration. **Source memos:** `memory/design_review_platform_rename_galadriel_memo.md` (architectural framing) + `memory/design_review_platform_rename_holden_memo.md` (integrity framing) + `memory/build_spec_0090_platform_rename_pm_memo.md` (PM build spec with MCP drift verification + 16 OQ adjudications).
+
+  - **§ V2.48-A — Naming convention rule (3-prefix taxonomy).** Every table name in the Precog schema MUST carry one of three shapes:
+
+    | Prefix | Shape | Semantics |
+    |--------|-------|-----------|
+    | `platform_*` | platform-tier | A row represents an external trading-platform's view of an instrument or its lifecycle (Kalshi-side, Polymarket-side, etc.). The row's identity is keyed by `(platform_id, external_id)`, columns mirror or summarize the platform's API objects, content is exclusively sourced from one platform's authoritative API. **Cross-platform rows MUST live in a different table.** |
+    | `canonical_*` | canonical-tier | A row represents a real-world referent (event, market-equivalence-class, observation, audit-ledger entry, lookup-vocabulary value) that may be sourced from multiple platforms or no platform. Identity is keyed by canonical natural keys. FKs FROM canonical to platform tables are typed `platform_<thing>_id`. |
+    | (no prefix) | dimension / internal-state | A row represents either a real-world dimensional entity orthogonal to any one platform (`teams`, `leagues`, `sports`, `venues`, `games`, `game_states`, `game_odds`, `temporal_alignment`), OR internal Precog application state (`orders`, `positions`, `trades`, `account_balance`, `account_ledger`, `edges`, `predictions`, `exit_attempts`, `position_exits`, `strategies`, `strategy_types`, `model_classes`, `probability_models`, `historical_*`, `team_rankings`, `external_team_codes`, `evaluation_runs`, `backtesting_runs`, `performance_metrics`, `circuit_breaker_events`, `alerts`, `system_health`, `scheduler_status`, `config_overrides`, `elo_calculation_log`). |
+
+    **Decision test for any new table** (apply in order; first match wins):
+    1. Mirrors a single platform's API objects? → `platform_T`. (If `T` may someday be re-sourced from a different platform, the rename is forced; plan the canonical-tier sibling now.)
+    2. Expresses a real-world referent constructed by reconciling 1+ platform sources? → `canonical_T`.
+    3. Represents internal Precog computation, decisions, audit, or operational telemetry? → no prefix.
+    4. Represents a real-world dimensional entity orthogonal to any platform? → no prefix.
+
+  - **§ V2.48-B — Tables to rename (locked list of 7).** These 7 tables ALL platform-mirror Kalshi's API and currently lack the `platform_*` prefix. Migration 0090 will ALTER TABLE RENAME each:
+
+    | Pre-rename | Post-rename | Row count (MCP at session 100) |
+    |---|---|---:|
+    | `events` | `platform_events` | 4,220+ |
+    | `markets` | `platform_markets` | 8,440+ |
+    | `series` | `platform_series` | 751+ |
+    | `market_snapshots` | `platform_market_snapshots` | 149,520+ |
+    | `market_trades` | `platform_market_trades` | 0 |
+    | `orderbook_snapshots` | `platform_orderbook_snapshots` | 0 |
+    | `settlements` | `platform_settlements` | 0 |
+
+    **Pattern 87 contract:** Migration 0090 is post-merge IMMUTABLE. Bug-fix Migration 0091 protocol if defect found post-merge.
+
+  - **§ V2.48-C — FK column rename rule + 15-column matrix.** When a table FK-references a `platform_*` table, the FK column MUST be named `platform_<thing>_id` (not `<thing>_id`). This forces every reference site to be self-documenting. The post-rename matrix (15 FK columns rename; 4 already-correctly-named):
+
+    **Renamed (15):**
+
+    | Referencing table | Old column | New column | Target |
+    |---|---|---|---|
+    | `markets` | `event_id` | `platform_event_id` | `platform_events` |
+    | `events` | `series_id` | `platform_series_id` | `platform_series` |
+    | `market_snapshots` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `market_trades` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `orderbook_snapshots` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `settlements` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `orders` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `orders` | `orderbook_snapshot_id` | `platform_orderbook_snapshot_id` | `platform_orderbook_snapshots` |
+    | `positions` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `trades` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `predictions` | `event_id` | `platform_event_id` | `platform_events` |
+    | `predictions` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `edges` | `market_id` | `platform_market_id` | `platform_markets` |
+    | `edges` | `market_snapshot_id` | `platform_market_snapshot_id` | `platform_market_snapshots` |
+    | `edges` | `orderbook_snapshot_id` | `platform_orderbook_snapshot_id` | `platform_orderbook_snapshots` |
+
+    **Already correctly named (4 — needs only target retargeting):** `canonical_event_links.platform_event_id`, `canonical_market_links.platform_market_id`, `canonical_match_overrides.platform_market_id`, `canonical_match_log.platform_market_id` (the 4th was added session 81 slot 0073 after the session 93 council memos; MCP-verified at session 100).
+
+    **Drift note (session 100 MCP re-verification):** Galadriel session 93 § 1.4 listed 16 FK columns to rename. The 16th was `canonical_events.series_id → platform_series_id` — but that column was DROPPED by Slot 2 (Migration 0086, session 96, CL-2 denorm collapse). The session 93 OQ-2 ("rename canonical_events.series_id?") is therefore MOOT at V2.48 authoring time. Pattern 91 V1.45+ MCP-first verification caught this drift and is documented in `memory/build_spec_0090_platform_rename_pm_memo.md` § 0.1 Axis 1.
+
+  - **§ V2.48-D — Lookup-table prefix exemptions (carve-outs).** Three lookup-tier tables sit in ambiguous categories. Each is explicitly exempt from the platform/canonical prefix rule:
+    - **`platforms`** — meta-table listing the platforms themselves. Renaming to `platform_platforms` is recursive; renaming to `canonical_platforms` is wrong (platforms are not reconciled-from-sources). Stays un-prefixed; namespace remains: `platforms` IS the platform registry; `platform_<thing>` IS a row of platform-data.
+    - **`match_algorithm`** — Pattern 81 lookup-table registry of matcher algorithms. Canonical-tier-internal vocabulary used by `canonical_event_links`, `canonical_market_links`, `canonical_match_log`. ADR-118 V2.41 ratified the singular form at session 79; Cohort 5+ may revisit pluralization + canonical-prefix together (per § V2.48-I).
+    - **`observation_source`** — Pattern 81 lookup-table registry of observation sources (3 rows: `espn`, `kalshi`, `manual`). Same shape as `match_algorithm`; same exemption with same Cohort 5+ re-evaluation hook.
+
+  - **§ V2.48-E — Internal trading state carve-out.** The following tables stay un-prefixed despite carrying some platform-mirrored columns. Their dominant identity is internal Precog state (strategies / models / edges / positions / trades / orders / account-balance / audit-ledger), and prefixing them as `platform_*` would be misleading: `orders`, `positions`, `trades`, `account_balance`, `account_ledger`, `edges`, `predictions`, `exit_attempts`, `position_exits`. Galadriel's 4-axis test (identity origin / augmentation density / reuse universe / lifecycle independence) verified each table independently — see `design_review_platform_rename_galadriel_memo.md` § 4. **However, FK columns within these tables DO rename per § V2.48-C** (e.g., `orders.market_id → orders.platform_market_id`); the table stays un-prefixed but its FK references to renamed tables update.
+
+    **Edge case clarification:** `trades` (our trade fills, FK to `orders`) is un-prefixed; `market_trades` → `platform_market_trades` (everyone-on-the-platform's fills, FK to `markets`). The rename strengthens this disambiguation: post-rename, the prefix shape forces discriminating language at every reference site.
+
+  - **§ V2.48-F — Cohort 5+ Slot A becomes rename; matcher slips to Slot B.** Per Galadriel § 6.1 framing (c) + session-99 forward plan + PR #1173 update: the rename slot is Cohort 5+ **Slot A** (Migration 0090). The matcher slot (originally `build_spec_slot_a_matcher_pm_memo.md`) becomes **Slot B**, dispatched fresh against the post-rename schema in session ~101. Authoring matcher build spec against pre-rename names + then renaming = wasted cycles; matcher's S82 re-runs trivially against the renamed schema. **PR sequence:** V2.48 ADR ships first as docs-only PR-X (this PR); Migration 0090 + ~50-70 src SQL substitutions + ~150 test SQL substitutions + 2 Python module renames ships next as PR-Y (large, gated on Epic #1071 round-trip CI gate green). Bundle decision (OQ-O6 adjudicated session 100): SEPARATE — bundling V2.48 ADR text on top of the largest single migration in project history would inflate reviewer cognitive load past acceptable; ADR V2.48 as docs-only PR can ship in parallel-background ungated by Migration 0090 CI churn.
+
+  - **§ V2.48-G — Pattern 87 reaffirmation.** Per `docs/guides/DEVELOPMENT_PATTERNS.md` Pattern 87 (Append-Only Migration Files, V1.40+): once Migration 0090 is shipped (PR-Y merged), its file contents are immutable. No edits to migration code, seed values, docstrings, comments, whitespace. ADR-118 V2.47 prose + all migrations 0001-0089 are ALSO immutable — V2.48 does NOT amend any prior text; it adds new text via this changelog block. If a defect in Migration 0090 surfaces post-merge, the corrective protocol is Migration 0091 (forward fix), NEVER amend 0090. Pre-merge bug-bash via full integration suite + race + e2e + round-trip CI gate is the merge-block discipline.
+
+  - **§ V2.48-H — VCR cassette / external API response disambiguation.** The Kalshi API uses "events" / "markets" / "series" namespace in HTTP request paths and JSON response shapes. Project VCR cassettes (`tests/cassettes/`) record HTTP request/response pairs, NOT DB queries. Cassettes are NOT touched by Migration 0090 — the rename affects internal table names only, not external API contracts. Operator runbook addition (PR-Y description): if VCR cassette regeneration is needed post-rename for unrelated reasons, Kalshi's `events`/`markets`/`series` namespace is preserved in the recorded HTTP traffic.
+
+  - **§ V2.48-I — Cohort 5+ follow-on commitments.** Per OQ-O7 adjudicated session 100, an umbrella issue will be filed at PR-Y merge tracking these forward items:
+    1. **`external_team_codes` prefix re-evaluation** — currently 0 rows; spans Kalshi + ESPN; revisit when Polymarket adds a third source (then `platform_team_codes` may make sense, or canonical-prefix sibling).
+    2. **`match_algorithm` / `observation_source` plural + canonical-prefix re-evaluation** — Pattern-81 lookup-table consistency improvement (per § V2.48-D carve-outs).
+    3. **`platform_*` tables NOT NULL on `platform_id` tightening** — Pattern 84 NOT VALID + VALIDATE two-phase; required for new-platform onboarding (e.g., Polymarket); deferred from rename slot to keep scope manageable.
+    4. **Slot B matcher dispatch** — re-spec matcher build spec against post-rename schema state (Pattern 91 V1.45+ MCP-first); S82 INHERITED candidate; Builder dispatch in session ~101.
+    5. **`markets_id_seq1` trailing `1` cleanup** (per OQ-H1) — low-priority cosmetic preserved verbatim through rename.
+
+  - **§ V2.48-J — Pattern 91 V1.45+ + Pattern 92 + Pattern 93 self-application during slot 0090 build.** The Migration 0090 Builder dispatch will self-apply three Patterns from DEVELOPMENT_PATTERNS V1.45:
+    - **Pattern 91 V1.45+ (MCP-First Premise Verification):** all schema claims in the slot 0090 build spec MCP-grounded at Builder dispatch time. Specifically: capture `pg_views.view_definition` for each of 9 affected views BEFORE authoring view recreation DDL; capture `information_schema.constraint_column_usage` for FK constraint name enumeration; capture `pg_indexes` for index list; capture `information_schema.sequences` for sequence list (preserve `markets_id_seq1` trailing `1`).
+    - **Pattern 92 (5-axis tier-separation test):** Axis 0 (value-enum MCP probe) self-applied above § V2.48-C drift note; Axes 1-4 covered by build spec § 0.1.
+    - **Pattern 93 (SELECT * view recreation antipattern):** all 9 view recreations in Migration 0090 MUST use EXPLICIT COLUMN LISTS, NOT `SELECT *`. The session 98 Slot 4 R5' fix-pass empirical proof (14 round-trip CI failures → 0) is fresh institutional memory; failing to apply Pattern 93 in slot 0090 would replay the same failure mode at scale.
+
+  - **§ V2.48-K — Closes architectural debt from V2.46 line 18092.** ADR-118 V2.46 contained the explicit deferral statement: *"Rename markets → platform_markets in Phase 1. Deferred to post-Phase-3. Prose/ADR text uses platform_market naming starting now."* V2.48 closes this deferral. The schema now matches the prose/ADR vocabulary that has been canonical since Cohort 1. Vocabulary saturation in canonical-layer docs (51 occurrences of `platform_event` / `platform_market` / `platform_series` across 6 canonical-layer docs at session 93 audit time) is now structurally backed by schema reality.
+
 **Changes in v2.47:**
 - **ADR-118 CLEANUP EPIC #1155 CLOSE-OUT: Slots 1-4 ratification + R6 codification + Pattern 82 V2 scope-narrowing + V2.40 Item 4 pin retirement (session 99).** V2.47 is the docs-only codification slot that closes the 5-slot cleanup epic #1155 (Slots 1-4 shipped Migrations 0085-0089 across sessions 95-98; Slot 5 is this amendment). The amendment ratifies the architectural decisions made in Slots 1-4, formally retires the V2.40 Item 4 pin (Pattern 82 V2 load-bearing test pin), and codifies the R6 = R3 + R5' + R8 lifecycle redistribution that Galadriel's session 98 council calibration recovered after the session 94 D2 duplicate-verdict TIER-CONFUSION FABRICATION. **No new tables, no new migrations** ship under V2.47 itself. Closes Epic #1155.
 
