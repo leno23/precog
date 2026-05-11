@@ -13812,12 +13812,15 @@ A migration drops + recreates a view that is defined over a table whose column l
 
 ### Right
 
+This snippet is illustrative — expand the **full 25-column list** at use site. See
+`alembic/versions/0089_*.py` upgrade Step 3 for the canonical reference.
+
 ```python
 # CORRECT — explicit column list preserves view's frozen contract shape
 op.execute(
     "CREATE OR REPLACE VIEW current_game_states AS "
     "SELECT id, espn_event_id, home_team_id, away_team_id, "
-    "       /* ... 21 more columns ... */ "
+    "       ...  -- expand full 25-column list per Migration 0089 "
     "       game_state_key "
     "FROM game_states WHERE row_current_ind = TRUE"
 )
@@ -13934,7 +13937,7 @@ The single-step bounce produced a clean test DB state at HEAD. Pytest fired in 1
    - **Option A (preferred):** single-step bounce. `alembic downgrade <one-step-back-from-current> ; alembic upgrade head`. Cheaper than full reset; preserves data where possible.
    - **Option B:** drop + recreate test DB. `dropdb precog_test ; createdb precog_test ; alembic upgrade head`. Full reset; loses any test data; safe.
    - **Option C:** manual SQL surgery. Surgically rebuild the inconsistent tables. **Avoid** unless the partial-state is well-understood.
-3. **If pytest hangs anyway:** the DB might still be polluted, OR a process from the prior run is still holding a connection-pool lock. Kill any lingering python.exe processes (`tasklist | grep python`; `taskkill /PID <pid>`).
+3. **If pytest hangs anyway:** the DB might still be polluted, OR a process from the prior run is still holding a connection-pool lock. Kill any lingering python processes — Windows: `tasklist | findstr python` then `taskkill /PID <pid>` (or `Stop-Process -Id <pid>` in PowerShell). macOS/Linux: `ps aux | grep python` then `kill <pid>` (or `pkill -f python`).
 4. **Validate consistency before pytest:** quick MCP probe — `SELECT version_num FROM alembic_version` should match HEAD; `\d <key tables>` should show expected columns.
 
 **Before running `alembic downgrade base` or `upgrade head` in a session:**
@@ -13946,7 +13949,7 @@ The single-step bounce produced a clean test DB state at HEAD. Pytest fired in 1
 
 If pytest doesn't write any output to its task file within 60 seconds of launch, suspect a hang. Don't wait — investigate:
 
-1. `tasklist | grep python` — is the process running?
+1. Is the process running? Windows: `tasklist | findstr python`. macOS/Linux: `ps aux | grep python`.
 2. Check pytest's output file size — has it grown? If 0 bytes after 60s, hang likely.
 3. MCP probe: `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle'` — long-running queries OR lock-waits visible.
 4. If hung, terminate the process. **Don't wait overnight.**
