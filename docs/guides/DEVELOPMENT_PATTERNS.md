@@ -1,13 +1,22 @@
 # Precog Development Patterns Guide
 
 ---
-**Version:** 1.44
+**Version:** 1.45
 **Created:** 2025-11-13
-**Last Updated:** 2026-05-04
+**Last Updated:** 2026-05-10
 **Purpose:** Comprehensive reference for critical development patterns used throughout the Precog project
 **Target Audience:** Developers and AI assistants working on any phase of the project
 **Extracted From:** CLAUDE.md V1.15 (Section: Critical Patterns, Lines 930-2027)
 **Status:** ✅ Current
+**Changes in V1.45:**
+- **Pattern 91 V1.45+ scope expansion: PM dispatch-prompt-authoring tier added.** Builder dispatch prompts terminate at LOCAL COMMIT; PM owns the push + PR-open step after diff-scoped review fires. Cites the ANNOUNCE template's DESIGN REVIEW + DIFF-SCOPED REVIEW + SPECIALIST TRIGGERS surface as a sequencing contract — each must be a separately-scheduled stage. N=9 explicit chain-of-trust catches enumerated across sessions 94+95+96+98 (conservative cumulative aggregate ≥N=11 including V1.44 sessions 89-91 carry-forward; `memory/feedback_chain_of_trust_pattern91_violation.md`); session 98 added the dispatch-prompt-authoring tier as an additional verification surface beyond V1.44 scope (`memory/feedback_tier2_review_sequencing_dispatch_protocol.md`).
+- **Pattern 82 V2 scope-narrowing: applicable scope reduced to canonical_markets only post-Slot-2.** Migration 0086 (cleanup epic Slot 2, session 96) flipped FK direction (teams → canonical_entities) and dropped both `canonical_entities.ref_team_id` and the polymorphic enforcement trigger `trg_canonical_entity_team_backref`. Pattern 82 V1's canonical-entity-team variant is retired; the V2 scope (canonical_markets only) is now the active surface.
+- **Pattern 92 NEW: 5-Axis Tier-Separation Test for Canonical-vs-Platform-vs-Domain-Spoke Schema Audits.** Galadriel session 98 corrective discipline; upgrade of the previous 4-axis test by adding Axis 0 (value-enum MCP probe) that fires BEFORE the 4 table-level axes whenever a column-level duplication claim is on the table. The previous 4-axis test passed vacuously on the session 94 D2 duplicate verdict because no axis inspected the column's CHECK enumeration; the 5-axis test would have killed the verdict immediately. Source memo: `memory/design_review_lifecycle_phase_galadriel_memo.md` § 6.2 + § 7.
+- **Pattern 93 NEW: SELECT * View Recreation in Migrations is an Antipattern.** Slot 4 Migration 0089 fix-pass catch (Ripley P0-1, session 98): `CREATE OR REPLACE VIEW v AS SELECT * FROM t` captures the table's current column list at view-creation time and freezes it; later migrations that recreate the view via `SELECT *` pick up columns added by intermediate migrations, creating hidden round-trip dependencies. Empirical proof: 14 round-trip CI gate failures → 0 after explicit-25-column-list fix. Source memo: `memory/feedback_select_star_view_recreation_antipattern.md`.
+- **Pattern 94 NEW: Persistent Test DB State Pollution Hangs Pytest Fixture Setup.** Session 98 hung-pytest overnight incident: after an `alembic downgrade base` mid-chain UniqueViolation, the persistent test DB was left in partial-downgrade state; subsequent pytest invocations hung indefinitely on fixture setup. Resolution: single-step bounce (`alembic downgrade <N-1> ; alembic upgrade head`) rather than `downgrade base`. Source memo: `memory/feedback_persistent_test_db_state_pollution_hung_pytest.md`.
+- **Pattern 95 NEW: Migration Trigger-Function Whitespace is Load-Bearing for Round-Trip CI Gate Snapshots.** The round-trip CI gate uses `pg_get_functiondef()` to snapshot trigger function bodies for parity assertions across upgrade/downgrade cycles. Reformatting indentation in the trigger function HEREDOC changes the snapshot output even when behavior is unchanged, breaking parity. Origin: slot 0076 P2 (precedent); reaffirmed Slot 4 Migration 0088 (S68 nit on PR #1173).
+- **Active-pattern count:** 89 → 93 active (95 numbered slots − 2 reserved: 51 + 85; counting active includes the 4 NEW slots 92-95).
+- **Promotion sources:** `memory/feedback_chain_of_trust_pattern91_violation.md` (Pattern 91 V1.45+); `memory/feedback_tier2_review_sequencing_dispatch_protocol.md` (Pattern 91 V1.45+ dispatch-prompt-authoring tier); `memory/design_review_lifecycle_phase_galadriel_memo.md` (Pattern 92); `memory/feedback_select_star_view_recreation_antipattern.md` (Pattern 93); `memory/feedback_persistent_test_db_state_pollution_hung_pytest.md` (Pattern 94); session 98 Slot 4 S68 audit on PR #1173 (Pattern 95 reaffirmation; slot 0076 precedent retained).
 **Changes in V1.44:**
 - **Added Pattern 91: MCP-First Premise Verification for Authoring Artifacts (ALWAYS When an Authoring Artifact Makes a Claim About Live Schema State).** Origin: N=3 across sessions 89 + 90 + 91 — three consecutive sessions where build-spec / binding-input-memo / ADR-amendment authoring premise was wrong about live schema state, caught at three distinct pipeline stages (PM premise check, Builder execution time, Phase 3 adversarial review). Codifies the rule that any authoring artifact making a claim about live schema state — column existence, type, FK polarity, CHECK contents, FK target, table existence, populated state — MUST be MCP-verified at authoring time, not at Builder/Reviewer/Sentinel time. The S55 MCP-first verification rule applies symmetrically to PM-authored artifacts, not just to agent-dispatched analyses. Severity: HIGH (premise drift propagates through every downstream pipeline phase; late catches are asymmetrically expensive vs ~30s of MCP queries upstream).
 - **Cross-references:** Pattern 73 (SSOT — the canonical truth about live schema state is the live database, not the ADR / memory / recent context that documents intent); Pattern 78 (Two-Gate Audit Discipline — Gate A "bug still present" and Gate B "fix still valid" both require MCP verification against current schema, same discipline applied at audit time); Pattern 87 (Append-Only Migration Files — once shipped, the migration IS the live state; ADRs document INTENT, the database documents STATE).
@@ -8894,7 +8903,7 @@ last_trading_price = history[-2]['yes_price']  # Second-to-last row = last pre-s
 ## Related Documentation
 
 ### Foundation Documents
-- `docs/foundation/MASTER_REQUIREMENTS_V2.26.md` - All requirements
+- `docs/foundation/MASTER_REQUIREMENTS_V2.27.md` - All requirements
 - `docs/foundation/ARCHITECTURE_DECISIONS.md` - All ADRs (includes ADR-002, ADR-018-020, ADR-048, ADR-053-054, ADR-074, ADR-117, ADR-118, ADR-119)
 - `docs/foundation/DEVELOPMENT_PHASES_V1.8.md` - Phase planning
 
@@ -12268,9 +12277,17 @@ CREATE CONSTRAINT TRIGGER trg_canonical_entity_team_backref
 
 All Pattern 82 triggers MUST encode only the **forward direction**: when the discriminator value matches kind X, the typed back-ref column `ref_X_id` MUST be NOT NULL. The reverse direction (FORBID `ref_X_id IS NOT NULL` when discriminator value is non-X) is **intentionally NOT enforced** at the trigger level — preserves polymorphic-overloading future-extensibility per ADR-118 V2.38 decision #5 (ratified in V2.40 amendment).
 
-**Mandatory compensating mechanism:** every Pattern 82 application MUST be paired with a regression test that asserts no row carries a `ref_*_id` for a non-matching discriminator value. The test is **load-bearing** — it MUST NOT be skipped, retired, or admitted to any audit bypass set. For the canonical_entity instance, the test lives at `tests/database/test_canonical_entity_polymorphic_invariants.py` (folded into #1021 scope).
+**Mandatory compensating mechanism:** every Pattern 82 application MUST be paired with a regression test that asserts no row carries a `ref_*_id` for a non-matching discriminator value. The test is **load-bearing** — it MUST NOT be skipped, retired, or admitted to any audit bypass set.
 
-> **SCOPE NARROWING in V2.47:** Pattern 82 V2 applies to canonical_markets only post-cleanup-epic Slot 2. The canonical_entities-team variant retires via Migration 0086 (Slot 2 / session 96) — the FK direction is flipped (teams → canonical_entities, not canonical_entities → teams), the polymorphic enforcement trigger `trg_canonical_entity_team_backref` is dropped, and the typed back-ref column `canonical_entities.ref_team_id` is removed. Test deletion at Slot 2 (`tests/database/test_canonical_entity_polymorphic_invariants.py` deleted); formal scope-narrowing codified at V2.47 ADR amendment (Slot 5 / session 99). The "Concrete Instances" table below reflects the pre-Slot-2 state and will be revised at V2.47.
+### V2 Scope (post-Slot-2, session 96 — formalized at V2.47, session 99)
+
+Pattern 82 V1 (Migration 0061, session 71) applied to BOTH `canonical_entities` (the `ref_team_id` back-ref) AND `canonical_markets` (the `ref_market_id` back-ref). Two CONSTRAINT TRIGGERs co-existed: `trg_canonical_entity_team_backref` enforced "entity_kind=team requires ref_team_id NOT NULL" on `canonical_entities`; sibling triggers were planned for canonical_markets.
+
+Cleanup epic Slot 2 (Migration 0086, session 96; PR #1164) flipped the FK direction on the canonical-entity-team variant: `teams.canonical_entity_id BIGINT NULL FK -> canonical_entities(id) ON DELETE SET NULL` (Pattern 84 by-analogy 3rd use; precedent-style) supersedes the prior `canonical_entities.ref_team_id BIGINT NULL FK -> teams(team_id)` shape. With the direction flipped, the polymorphic typed back-ref column on `canonical_entities` is no longer needed, and the CONSTRAINT TRIGGER that enforced its discriminator-gated NOT NULL rule is structurally inapplicable. Migration 0086 DROPped `canonical_entities.ref_team_id`, the trigger, and the trigger function. The load-bearing regression test (`tests/database/test_canonical_entity_polymorphic_invariants.py`) was deleted at Slot 2 (Path A per session 96 PM adjudication).
+
+**V2 active scope (post-cleanup-epic):** Pattern 82 V2 applies to `canonical_markets` only. The `canonical_entities` variant is retired; ADR-118 V2.40 Item 4 pin (the load-bearing test pin) is formally retired by V2.47 (Slot 5, session 99). Future application sites for Pattern 82 are the planned sibling triggers on `canonical_markets` for fighter / candidate / storm / company kind-specific typed back-refs (per the "Template Candidates for Future Cohorts" table below — those template rows now key on canonical_markets parent table, not canonical_entities).
+
+**V1 historical-reference preservation:** Pattern 82 V1's canonical-entity-team instance is preserved as **migration-archaeology**. Pattern 87 (Append-only migration files) makes Migration 0061 + its V1 trigger + its V1 load-bearing test all part of the shipped history; the V1 instance was correct under the pre-Slot-2 FK direction and remains correct in the migration replay 0061 → 0086 (V1 trigger applies at 0061, structurally dropped at 0086). Readers reconstructing schema state from migration replay see V1 apply + retire in order.
 
 **Why one-direction-only AND why mandatory test:** without the load-bearing regression test, future cohorts copy-paste the trigger pattern verbatim and create an N×N matrix of silent overload paths where each trigger says "I don't apply to your kind" and a malformed row passes all of them. The test is the load-bearing compensating mechanism. (See `memory/design_review_1011_joechip_memo.md` § Item 4 STRONGEST CONCERN for the full decay-vector analysis.)
 
@@ -12809,7 +12826,7 @@ The marker breaks the silence. Without it, "is this doc fresh?" has no answer. W
 DATABASE_SCHEMA_SUMMARY V2.1 (`docs/database/DATABASE_SCHEMA_SUMMARY_V2.1.md`)
 demonstrates Pattern 86 in canonical form. Future revisions of that document
 update the marker fields in lockstep with the body — the marker leads, the
-prose follows. ARCHITECTURE_DECISIONS.md and MASTER_REQUIREMENTS_V2.26.md will
+prose follows. ARCHITECTURE_DECISIONS.md and MASTER_REQUIREMENTS_V2.27.md will
 adopt the marker shape in their next revisions (out of scope for this PR;
 tracked under Epic #1054 Phase 3 alongside G1 hook widening + version-marker
 auto-bumper).
@@ -13602,6 +13619,25 @@ The varied catch-stage is itself signal: premise drift can leak past PM authorin
 - **ADR amendment text** — especially when claiming current schema state in § amendment-justification or § rollback-runbook subsections.
 - **Design-review memos** — Galadriel / Holden / Miles / Uhura / Spock / etc. memos that cite specific columns, FKs, CHECK contents, or table existence.
 - **Operator runbooks** — adjacent surface; per Joe Chip standing-checklist item 13 (added session 91 from Glokta's session-90 PR #1144 review surface). Operator runbooks reference column names operators will run SQL against; non-executable instructions are a Pattern 91 violation regardless of which artifact ships them.
+- **PM dispatch prompts (V1.45+ scope expansion, session 99).** PM-authored dispatch prompts for Builder + Reviewer + Sentinel + specialist-trigger agents are an additional verification surface beyond V1.44 scope. **Builder dispatch prompts MUST terminate at LOCAL COMMIT** — no `git push`, no `gh pr create`. The push + PR-open step is a separately-scheduled PM stage that gates on Reviewer + Sentinel + specialist-trigger findings, NOT a Builder responsibility. Bundling PR creation into the Builder workflow compresses the diff-scoped review window and, in the worst case (session 98 origin), surfaces no concrete handoff point at all between "code is on disk" and "world sees the PR" — the diff-scoped reviewers either get dispatched against an open PR with auto-merge already armed (racing the merge) or get skipped entirely. The ANNOUNCE template's DESIGN REVIEW + DIFF-SCOPED REVIEW + SPECIALIST TRIGGERS surface MUST be cited in the dispatch sequencing; each trigger (S60 / S82 / T41 / C32 / C33 / etc.) is listed as FIRE or SKIP with rationale. The full dispatch-protocol prose lives at `memory/feedback_tier2_review_sequencing_dispatch_protocol.md` (session 98 origin).
+
+### Cumulative Evidence (sessions 94-98; V1.45+ Scope Expansion)
+
+Pattern 91 V1.44 codified N=3 evidence (sessions 89-91). V1.45+ expands the evidence base across sessions 94-98 — N=9 explicit catches enumerated below, conservative cumulative aggregate ≥N=11 including V1.44 sessions 89-91 carry-forward, surfacing the chain-of-trust dimension that V1.44 implied but did not explicitly codify:
+
+| Session | Surface | Catch shape | Memo |
+|---|---|---|---|
+| 94 | Council synthesis | Holden's "Epic #1071 round-trip CI gate not yet shipped" was itself a bounded MCP probe; Tyrion PM trusted-and-propagated as Slot 1 prerequisite without verifying via a different surface (closed issue search, integration test file inspection, CI step grep) — phantom prerequisite caught by PM self-correction at synthesis time. | `feedback_chain_of_trust_pattern91_violation.md` § N=1 |
+| 95 | PM self-citation | MEMORY.md said "DATABASE_SCHEMA_SUMMARY V2.1 is the canonical schema doc"; truth is V2.4 already exists at alembic_head=0084. PM trusted own past memory citation without `ls docs/database/DATABASE_SCHEMA_SUMMARY*` to expand surface. | `feedback_chain_of_trust_pattern91_violation.md` § N=2 |
+| 96 | Polish-bundle threshold | Builder cited "test DB has 984 teams"; PM set `_TEAMS_FIXTURE_SEED_MIN = 500`. Reality: three environments (CI test DB ~340, local test DB ~984, dev DB ~1,034). CI failed at `total=340 < 500`. The citation was correct *for one perspective* but didn't capture the full surface. | `feedback_chain_of_trust_pattern91_violation.md` § N=3 |
+| 98 | Council brief authoring | Council brief for lifecycle_phase review pre-staged ADR-118 V2.39 prose verbatim, surfacing Galadriel's session 73 co-authorship that had been forgotten at session 94. The pre-stage **prevented** the session 94 D2 duplicate-verdict recurrence. (Positive Pattern 91 evidence: the discipline saved the council from re-issuing the bad verdict.) | `design_review_lifecycle_phase_galadriel_memo.md` § 6.3 |
+| 98 | Build spec from Builder dispatch #1 | Builder Samwise dispatch #1 carried "Step 17. Run pytest. ... Step 20. Push. Step 21. gh pr create." compressed-workflow prompt. User caught the dispatch shape mid-build: *"doesn't the tier 2 announce dictate independent code and implementation review and sometimes two design reviews?"* | `feedback_tier2_review_sequencing_dispatch_protocol.md` § "The session 98 origin" |
+| 98 | Build spec from Builder dispatch #3 (B-1) | Build spec § 7 verification methodology — Samwise used `git stash` round-trip test that produced "pre-existing on plain main" verdict. Ripley's empirical-isolation methodology (downgrade DB to 0087, recreate view with explicit columns) produced the correct "Slot-4-introduced" verdict. | `feedback_select_star_view_recreation_antipattern.md` § "Detection" |
+| 98 | Build spec from Builder dispatch #3 (B-2) | `CREATE OR REPLACE VIEW v AS SELECT *` antipattern in Migration 0089 (Ripley P0-1 catch, 14 round-trip CI failures). | `feedback_select_star_view_recreation_antipattern.md` |
+| 98 | Build spec from Builder dispatch #3 (M-1) | Post-fix-pass, persistent test DB pollution after mid-chain `alembic downgrade base` UniqueViolation; subsequent pytest hung ~12 hours overnight. | `feedback_persistent_test_db_state_pollution_hung_pytest.md` |
+| 98 | Dispatch protocol gap | PM-authored Builder dispatch lacked the LOCAL COMMIT terminus + separate Reviewer + Sentinel + specialist-trigger dispatch stages. | `feedback_tier2_review_sequencing_dispatch_protocol.md` |
+
+**The varied catch-surface across sessions 94-98 confirms Pattern 91 operates at every authoring tier** — council frame outputs, PM synthesis citations, Builder dispatch prompts, council briefs, build spec verification methodology, Reviewer / Sentinel prompts, even PM's own past-memory citations. V1.45+ scope explicitly names the dispatch-prompt-authoring tier as an additional verification surface beyond V1.44 scope; future scope expansions are likely.
 
 ### Source
 
@@ -13615,6 +13651,395 @@ The varied catch-stage is itself signal: premise drift can leak past PM authorin
 - Pattern 78 — Two-Gate Audit Discipline: Gate A "bug still present" and Gate B "fix still valid" both require MCP verification against current schema; Pattern 91 codifies the same MCP-first discipline at authoring time rather than audit time.
 - Pattern 87 — Append-Only Migration Files: once shipped, the migration IS the live state; ADRs document INTENT, the database documents STATE. Pattern 91 enforces the directionality (database is canonical for state; ADR is canonical for decision).
 - **`memory/roster_agents.md`** § "MCP-first verification rule (Added S55, 2026-04-14)" — canonical S55 trigger definition; binds Holden / Galadriel / Elrond / Mulder / Cassandra / Deckard. Pattern 91 extends the rule symmetrically to PM-authored authoring artifacts (build specs, binding-input memos, ADR amendment text, design-review memos, operator runbooks). The trigger's home document owns the rule; Pattern 91 owns the scope-extension.
+
+---
+
+## Pattern 92: 5-Axis Tier-Separation Test for Canonical-vs-Platform-vs-Domain-Spoke Schema Audits (ALWAYS Before Issuing Column-Level Duplication Verdicts)
+
+**Severity:** HIGH — issuing a column-level duplication verdict on insufficient evidence cascades into wrong-shape cleanup decisions, wasted Builder cycles, and (in the worst case observed at session 94) destruction of canonical-tier capability that the original ADR explicitly anticipated. The recovery cost includes architectural re-think + multi-session forward-plan revisions + 4-agent council reconvened to debate the catch the original verdict produced. The upstream cost of Axis 0 (value-enum MCP probe) is one `mcp__postgres-dev__query` call — ~10 seconds.
+
+### Problem / Trigger
+
+An agent (architect-frame or other) issues a verdict that *column X duplicates column Y* or that *enum X subsumes enum Y* across schema tiers (canonical vs platform vs domain-spoke). The verdict is grounded in *column-name shape impression* and table-level properties (identity origin, augmentation density, reuse universe, lifecycle independence) but does NOT inspect the columns' value-enumerations or production-code read sites.
+
+**Session 94 origin (the canonical failure mode):** Galadriel issued the D2 verdict "`canonical_events.lifecycle_phase` duplicates `games.game_status`; collapse one of them." The verdict was generated by applying the 4-axis tier-separation test as authored:
+
+1. **Identity origin** — Precog-assigned vs platform-mirrored vs reconciled-from-sources
+2. **Augmentation density** — % of columns canonical vs platform-shape
+3. **Reuse universe** — multi-domain vs domain-specific
+4. **Lifecycle independence** — outlives platform vs bound to platform lifecycle
+
+These four axes inspect *table* properties. They do NOT inspect *column-vocabulary* properties. The duplicate-verdict was a column-vs-column claim, not a table-vs-table claim — the 4-axis test was the wrong instrument. The test passed vacuously without ever inspecting the enum.
+
+**The wider context that the 4-axis test missed:**
+- ADR-118 V2.39 carries an explicit 8-value canonical lifecycle_phase enum (`proposed` / `listed` / `pre_event` / `live` / `suspended` / `settling` / `resolved` / `voided`) shipped via Migration 0070.
+- `games.game_status` has its own 11-value CHECK with sport-tier game-clock states (`scheduled` / `pre` / `in_progress` / `halftime` / `end_of_period` / `final` / `final_ot` / `delayed` / `postponed` / `cancelled` / `suspended`) — verified live via `pg_get_constraintdef` against `ck_games_status` (session 99 Slot 5 fix-pass).
+- Three values overlap conceptually (`pre/pre_event`, `in_progress/live`, `suspended/suspended`); the other 13 values do not (8 + 11 − 6 = 13 distinct non-overlap-pair values).
+- 4+ production code paths read specific `game_status` values that have no `lifecycle_phase` analogue (api_connectors/espn_client.py:727; schedulers/league_priority.py:174; cli/espn.py:95; validation/espn_validation.py 23 occurrences).
+
+A 30-second MCP probe at session 94 (`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='canonical_events'::regclass AND conname LIKE '%lifecycle_phase%'`) would have surfaced the 8-value enum and killed the verdict. The probe was not run.
+
+### The Pattern / Rule
+
+> When auditing a **column-level duplication claim** or **cross-tier-confusion claim**, run **Axis 0 (value-enum MCP probe)** via `pg_get_constraintdef` BEFORE Axes 1-4 (table-level tier classification). If Axis 0 shows enum cardinality or fine-grained-value divergence OR maps to demonstrably different semantic surfaces (e.g., game-clock state vs market-relevance state), the duplication claim is structurally suspect — escalate to read-side production-code grep before issuing verdict. The 4-axis table-level test continues to apply for table-vs-table tier-classification claims unchanged; Axis 0 fires only when the verdict involves "column X duplicates column Y" or "enum X subsumes enum Y."
+
+### Canonical Shape (The 5 Axes)
+
+**Axis 0 — Value-enum probe (NEW; fires BEFORE Axes 1-4 on column-level claims).**
+
+```sql
+-- For column X on table T:
+SELECT conname, pg_get_constraintdef(oid)
+  FROM pg_constraint
+ WHERE conrelid = 'public.T'::regclass
+   AND contype = 'c'
+   AND conname LIKE '%X%';
+```
+
+Compare the resulting CHECK enumerations between the two columns under suspicion:
+
+- **Different cardinality** (5-value vs 11-value) → suspect: columns answer different questions on the same row.
+- **Demonstrably orthogonal semantic surfaces** (e.g., "is the bet still meaningful?" vs "what's the game-clock state?") → suspect: orthogonal-question test required.
+- **Production-code grep on each value** — does each column's value-set get read by code that the other column doesn't serve? If yes, columns are semantically distinct regardless of name-shape similarity.
+
+If Axis 0 indicates divergence, the column-duplication verdict is **rejected at gate** and the audit terminates before Axes 1-4 even fire.
+
+**Axes 1-4 — Table-level tier classification (UNCHANGED from V1.44 4-axis test).**
+
+1. **Identity origin** — Precog-assigned vs platform-mirrored vs reconciled-from-sources
+2. **Augmentation density** — % of columns canonical vs platform-shape
+3. **Reuse universe** — multi-domain vs domain-specific
+4. **Lifecycle independence** — outlives platform vs bound to platform lifecycle
+
+### Concrete Failure Mode (Session 94 D2 Duplicate Verdict)
+
+| Step | Test applied | Outcome | Why wrong |
+|---|---|---|---|
+| 1 | Column-name shape impression | `canonical_events.lifecycle_phase` looks like `games.game_status` | Name-shape similarity is not semantic equivalence. |
+| 2 | 4-axis table-level test | `canonical_events` is canonical-tier; `games` is sport-tier — axes 1-4 pass-through on table-level tier separation. **But that is a table-level pass, not a column-level pass.** | The columns themselves were never inspected. |
+| 3 | Verdict | "Duplicate; collapse one of them" | Bound by the test's instrument scope (table-level), not by the claim's scope (column-level). |
+| 4 | Production cost | Encoded as D2 in cleanup synthesis; Slot 4 dispatched against the false verdict; recovered only at session 98 4-agent council | Multi-session forward-plan slip. |
+
+### Recovery via Axis 0 (Session 98 Calibration)
+
+Galadriel session 98 recalibration: TIER-CONFUSION FABRICATION (not defensible-at-the-time). Root causes:
+
+1. The value-enum probe was not run.
+2. The orthogonal-question test was not applied.
+3. ADR-118 V2.39's three-distinct-concerns prose was not re-read (Galadriel was co-author at session 73; "what I helped write at session 73, I forgot at session 94").
+4. Production code dependence was not surveyed (`grep -rn "game_status ==" src/` would have surfaced the 23 occurrences in validation/espn_validation.py).
+
+The 5-axis test upgrade adds Axis 0 specifically to catch this failure mode. Per Galadriel's session 98 memo § 6.2: *"the duplicate verdict at session 94 is mine ... The 5-axis upgrade is the corrective discipline I propose to prevent recurrence."*
+
+### How to Apply
+
+**Before issuing any column-level duplication verdict:**
+
+1. **Identify the two columns under suspicion.** Name them explicitly with table + column.
+2. **Run Axis 0:** MCP-probe both CHECK constraints via `pg_get_constraintdef`. Tabulate the value enumerations side-by-side.
+3. **Cross-check cardinality + value sets.** If cardinality differs or value sets are not subsets of each other, escalate to step 4.
+4. **Production-code grep on the divergent values.** For each value present in one column's enum but absent from the other's, grep `src/` for reads on that value. If any reader exists, the columns serve different semantic surfaces — verdict is structurally suspect.
+5. **Re-read the canonical ADR section for the tier under audit.** If you (the agent) previously co-authored prose about the columns, retrieve that prose verbatim. Decay-vector: agents forget their own co-authored framings on long time horizons.
+6. **Issue verdict only if Axes 0 + 1-4 all agree.** Otherwise, escalate to council adjudication or PM-side premise verification.
+
+### Anti-Recurrence Test
+
+Before any council/agent column-level duplication verdict:
+
+1. Was Axis 0 (value-enum MCP probe) executed? **If no:** verdict is structurally invalid; redraft after probe.
+2. Did the verdict-author re-read the canonical ADR section for the tier under audit? **If no:** retrieve and re-read; redraft if the ADR contradicts the verdict.
+3. Did the verdict-author run production-code grep on the divergent values? **If no:** run grep; if any reader exists for divergent values, escalate.
+4. Is the verdict written as "X duplicates Y" (column-level) but the test mechanics applied are table-level only? **If yes:** wrong instrument; redraft after applying Axis 0.
+
+If any of (1)-(4) fails, verdict is wrong-shape; redraft.
+
+### Cross-References
+
+- Pattern 91 (MCP-First Premise Verification for Authoring Artifacts) — sister discipline at PM-side; Pattern 92 covers agent-side architect-frame mechanics.
+- Pattern 73 (SSOT) — value enumerations live in CHECK constraints + Python constants tuples; verdict-author MUST cite the canonical home.
+- ADR-118 V2.47-D (R6 codification) — the load-bearing four-distinct-concerns model that emerged from Galadriel's session 98 recalibration of the session 94 D2 verdict.
+- Galadriel session 98 memo § 6.2 + § 7 (`memory/design_review_lifecycle_phase_galadriel_memo.md`) — full TIER-CONFUSION FABRICATION calibration including the 4 root-cause analysis.
+- ADR-118 V2.39 § "three-distinct-concerns" — the prose Galadriel co-authored at session 73 and forgot at session 94; this Pattern's anti-recurrence test mandates retrieving authored prose before issuing column-level verdicts.
+
+### Source
+
+- `memory/design_review_lifecycle_phase_galadriel_memo.md` § 6.2 (5-axis upgrade origin + 4 root-cause analysis) + § 7 (Pattern 92 candidate description).
+- `memory/design_review_lifecycle_phase_synthesis.md` (council adjudication of R6 = R3 + R5' + R8 as the recovery from D2).
+- ADR-118 V2.39 Items 2/3 (the three-distinct-concerns model that the session 94 D2 verdict structurally contradicted).
+- ADR-118 V2.47-D (R6 codification — the architecturally-complete answer the 5-axis test would have produced at session 94 if it had been the active instrument).
+
+---
+
+## Pattern 93: SELECT * View Recreation in Migrations is an Antipattern (ALWAYS Use Explicit Column Lists in CREATE OR REPLACE VIEW)
+
+**Severity:** HIGH — `CREATE OR REPLACE VIEW v AS SELECT * FROM t` in a migration captures the table's current column list at view-creation time and **freezes it**. Later migrations that recreate the view via `SELECT *` pick up columns added by intermediate migrations, creating hidden round-trip dependencies between migrations whose downgrade chains then conflict. The conflict surfaces only when the round-trip CI gate runs the downgrade chain — far from the migration that introduced the bug. Empirical proof at session 98 Slot 4 Migration 0089: **14 round-trip CI gate failures resolved by switching `SELECT *` → explicit 25-column list.**
+
+### Problem / Trigger
+
+A migration drops + recreates a view that is defined over a table whose column list has changed since the view was first created. The intuitive form `CREATE OR REPLACE VIEW v AS SELECT * FROM t` looks declarative and DRY ("give me whatever columns the table has"). But PostgreSQL freezes a view's column list at CREATE-time; the apparent declarative semantic is illusory — it's actually equivalent to a one-time snapshot. Worse: that snapshot creates hidden coupling to intermediate migrations.
+
+### Concrete Failure Mode (Session 98 Origin — Slot 4 Migration 0089)
+
+**Setup:**
+
+1. Migration 0001 creates `current_game_states` view via `CREATE OR REPLACE VIEW current_game_states AS SELECT * FROM game_states WHERE row_current_ind = TRUE`. View's column list is frozen to `game_states`'s columns at that time.
+2. Migration 0044 drops `game_states.game_state_id`, drops the view, drops the column, recreates the view via `SELECT *`. View's column list is re-frozen to `game_states`'s post-0044 columns.
+3. Migrations 0045-0079 ship various changes; **none touch the view**. View's column list remains frozen at 0044's snapshot.
+4. Migration 0080 adds `canonical_event_id` to `game_states`. **The view's column list is NOT updated** — it still reflects 0044's snapshot, which doesn't include `canonical_event_id`. So 0080's downgrade can drop `canonical_event_id` cleanly (no view dependency).
+5. **Migration 0089 (the catch):** drops `game_states.game_status`, follows slot 0044's view-dance pattern: drop view → drop column → `CREATE OR REPLACE VIEW current_game_states AS SELECT * FROM game_states WHERE row_current_ind = TRUE`. **The view's column list is now re-frozen to the post-0089 game_states columns — INCLUDING `canonical_event_id` (added by 0080).**
+6. Round-trip CI gate runs `alembic downgrade base; alembic upgrade head` cycles. After 0089's `SELECT *` recreation captures `canonical_event_id`, when the downgrade chain hits 0080's `DROP COLUMN canonical_event_id`, PostgreSQL refuses: *"cannot drop column canonical_event_id of table game_states because other objects depend on it (view current_game_states depends on column canonical_event_id)"*.
+7. **14 round-trip CI gate failures**, all in revisions 0067-0080's downgrade path, ALL stemming from the single `SELECT *` recreation in Migration 0089.
+
+**Detection:** initially mis-diagnosed as "pre-existing failures." Three review frames disagreed:
+- Builder Samwise (`git stash` test): "pre-existing on plain main"
+- Glokta Reviewer (static DDL inspection): "Migration 0080 missing view-dance pattern; recommend `--no-verify` push + Slot 6 follow-up issue"
+- **Ripley Sentinel (MCP empirical isolation):** downgraded dev DB to 0087, manually recreated `current_game_states` with explicit column list excluding `canonical_event_id`, ran `alembic downgrade 0079`. **0080.downgrade() succeeded.** This proved the bug is Slot-4-introduced.
+
+**Fix:** replace `SELECT *` with explicit 25-column list (excluding `canonical_event_id`) on both upgrade Step 3 and downgrade Step 3 of Migration 0089. Empirical result: 14 round-trip failures → 0 failures.
+
+### The Pattern / Rule
+
+> Migrations that recreate views (via `CREATE VIEW` or `CREATE OR REPLACE VIEW`) **MUST use explicit column lists**, not `SELECT *`. The explicit list should match the view's **pre-migration contract shape** (or whatever shape its consumers depend on), not the table's current column set.
+
+### How to Apply
+
+**For migrations that drop or recreate views:**
+
+1. **Read the view's pre-migration column list** — `SELECT column_name FROM information_schema.columns WHERE table_name = '<view_name>' ORDER BY ordinal_position` against the alembic-revision state immediately preceding the migration.
+2. **Determine which columns the migration's intent requires** — typically `<pre-migration columns> minus <columns being dropped>`.
+3. **Encode that list explicitly in `CREATE OR REPLACE VIEW`** — list every column by name. Both upgrade and downgrade directions if the migration recreates the view.
+4. **Add a code comment** explaining why the explicit list exists (round-trip parity invariant; reference this pattern).
+
+### Right
+
+```python
+# CORRECT — explicit column list preserves view's frozen contract shape
+op.execute(
+    "CREATE OR REPLACE VIEW current_game_states AS "
+    "SELECT id, espn_event_id, home_team_id, away_team_id, "
+    "       /* ... 21 more columns ... */ "
+    "       game_state_key "
+    "FROM game_states WHERE row_current_ind = TRUE"
+)
+```
+
+### Wrong
+
+```python
+# WRONG — SELECT * captures current table columns and freezes them,
+# silently coupling this migration's view shape to whatever
+# intermediate migrations have done to the table
+op.execute(
+    "CREATE OR REPLACE VIEW current_game_states AS "
+    "SELECT * FROM game_states WHERE row_current_ind = TRUE"
+)
+```
+
+### Slot 0044 Precedent — Pattern 87 Carve-Out
+
+Migration 0044 introduced the view-dance pattern via `SELECT *`. Pattern 87 (append-only migrations) forbids editing 0044 retroactively. Slot 4's Migration 0089 fix is enabled by Pattern 87's **not-yet-merged carve-out** — 0089 was editable at the moment Ripley caught the bug because it hadn't been pushed/merged yet.
+
+Migration 0044's `SELECT *` is a known-issue ledger entry. Future migrations that touch `current_game_states` MUST use explicit column lists (per this Pattern); 0044's bug is grandfathered as immutable.
+
+### Round-Trip CI Gate as Detection Surface
+
+This class of bug is **invisible to static analysis** (Glokta-frame) AND **invisible to per-migration testing** (each migration round-trips clean in isolation). It surfaces only when:
+
+- The round-trip CI gate runs the **full migration chain** down + up
+- AND the parametrization covers the revision range that includes the dependency-conflicting downgrade
+
+Ripley's empirical isolation methodology (downgrade DB to mid-chain state, manually probe view shape, run controlled downgrade-step experiment) was the only frame structurally capable of producing decisive signal. **Sentinel-frame discipline earned its keep here.**
+
+### Anti-Recurrence Test
+
+Before any migration that touches a view:
+
+1. Does the migration use `CREATE OR REPLACE VIEW v AS SELECT * FROM t`? **REJECT** — author explicit column list.
+2. If `CREATE OR REPLACE VIEW v AS SELECT col1, col2, ... FROM t`, does the column list match the view's **pre-migration contract shape**? **VERIFY via `information_schema.columns`.**
+3. Does the migration's downgrade direction symmetrically use the explicit column list (with the dropped column added back, if applicable)? **VERIFY upgrade and downgrade view DDLs are inverses.**
+4. Does the round-trip CI gate cover the revision range that touches this view's underlying table? If not, expand the gate's parametrization.
+
+If any of (1)-(4) fails, migration is wrong-shape; redraft.
+
+### Cross-References
+
+- Pattern 87 (Append-Only Migration Files) — Migration 0044's `SELECT *` is grandfathered; this Pattern applies forward.
+- Pattern 94 (Persistent Test DB State Pollution) — sister discipline from same session 98 fix-pass; Pattern 93 is the root cause of the round-trip failure, Pattern 94 is the operational consequence of trying to verify the fix.
+- Pattern 91 (MCP-First Premise Verification for Authoring Artifacts) — V1.45+ N=9 explicit evidence point (conservative aggregate ≥N=11 including V1.44 carry-forward); this catch is part of the cumulative evidence base.
+- `memory/feedback_select_star_view_recreation_antipattern.md` — full origin memo with 14-failure → 0-failure empirical proof.
+
+### Source
+
+- `memory/feedback_select_star_view_recreation_antipattern.md` — session 98 origin memo.
+- Migration 0044 — introduced the view-dance pattern with `SELECT *` (grandfathered per Pattern 87).
+- Migration 0080 — added `canonical_event_id` to `game_states` (the column whose downgrade conflicted post-0089).
+- Migration 0089 — the catch + the fix; explicit 25-column list in both upgrade and downgrade view DDL.
+
+---
+
+## Pattern 94: Persistent Test DB State Pollution Hangs Pytest Fixture Setup (ALWAYS Single-Step Bounce After Mid-Chain Alembic Failure)
+
+**Severity:** MEDIUM-HIGH — when the persistent test DB is left in a partial-downgrade state after a mid-chain alembic failure, subsequent pytest invocations hang indefinitely on fixture setup. The hang produces no useful error messages — fixtures wait on locks, retry on inconsistent state, or fall into infinite-loop conditions inside connection-pool reconciliation logic. Session 98 incident: 12 hours of overnight pytest hang before user terminated the process. Recovery via single-step bounce takes ~30 seconds.
+
+### Problem / Trigger
+
+The project uses a persistent test DB (`PRECOG_ENV=test` → `precog_test` PostgreSQL DB) shared across pytest invocations within a session. Many integration tests use session-scoped fixtures that assume the DB is at HEAD state. When an alembic command leaves the DB in a partial-downgrade state:
+
+- `alembic_version` table reports an intermediate revision
+- Some tables exist; others have been dropped or partially modified
+- Foreign-key constraints may be inconsistent
+- Seed data may be partially present (causing UniqueViolation on next upgrade attempt)
+- Some sessions hold connection-pool locks that aren't released until the process dies
+
+Subsequent pytest fixtures that try to set up DB state for tests will hang or fail in ways that don't surface useful error messages.
+
+### Concrete Failure Mode (Session 98 Origin)
+
+**Setup:**
+
+1. Builder Samwise dispatches #1 through #4 cycled the persistent test DB through `alembic upgrade head` multiple times during build verification.
+2. After Slot 4 Tier 1 Momentum fix-pass attempt, PM ran `alembic downgrade base` to fully reset the test DB before re-running pytest.
+3. The downgrade chain hit a `UniqueViolation` on `idx_games_espn_event` mid-chain (somewhere between 0050 and 0040 — seed data conflict during a downgrade-then-upgrade cycle).
+4. The downgrade aborted, leaving the test DB at a partial-downgrade state: `alembic_version` somewhere mid-chain; some tables in their downgraded state, others in their HEAD state.
+5. PM kicked off pytest expecting to validate the fix-pass.
+6. **Pytest hung indefinitely.** Best diagnosis (post-hoc): the conftest's `db_pool` or testcontainer fixture got stuck either waiting on a connection lock from a prior abandoned connection OR trying to reconcile schema state that didn't match expected fixture preconditions.
+7. Hang persisted for ~12 hours overnight until user manually terminated the process.
+
+**Resolution that worked the next morning:**
+
+```bash
+# Reset to a known-good state via single-step bounce:
+alembic downgrade 0088    # one step back from HEAD
+alembic upgrade head       # re-apply 0089 (with fix-pass content) cleanly
+```
+
+The single-step bounce produced a clean test DB state at HEAD. Pytest fired in 17 seconds with 53/53 PASSED.
+
+### Why the Single-Step Bounce Worked but `downgrade base` Did Not
+
+`alembic downgrade base` runs the **entire downgrade chain** (0089 → 0088 → ... → base). Each step is a separate transaction. When seed data conflicts cause a mid-chain failure, the chain aborts at the failing step. The DB is left at the failing-step's revision in `alembic_version` BUT may have a mix of pre-step and post-step schema changes due to partial transaction commit OR previous-step's partial application.
+
+`alembic downgrade 0088` runs only ONE step back from current HEAD. This is a single transaction that either fully succeeds or fully rolls back. No partial-state risk.
+
+### The Pattern / Rule
+
+> When alembic downgrade or upgrade fails mid-chain on the persistent test DB, **reset the DB to a known-good state BEFORE re-running pytest**. Do NOT trust that subsequent pytest invocations will reconcile the inconsistent state. Prefer single-step bounces (`alembic downgrade <one-step-back-from-current> ; alembic upgrade head`) over `downgrade base`-then-`upgrade head` cycles for pre-push verification — most pre-push verification needs only a one-step bounce of the most recent migration.
+
+### How to Apply
+
+**Before running pytest after any alembic command that may have failed mid-chain:**
+
+1. **Check `alembic_version`** — does it show the expected HEAD revision? If yes, DB is consistent.
+2. **If `alembic_version` shows an intermediate revision:** the DB is in partial-downgrade state. Recover via:
+   - **Option A (preferred):** single-step bounce. `alembic downgrade <one-step-back-from-current> ; alembic upgrade head`. Cheaper than full reset; preserves data where possible.
+   - **Option B:** drop + recreate test DB. `dropdb precog_test ; createdb precog_test ; alembic upgrade head`. Full reset; loses any test data; safe.
+   - **Option C:** manual SQL surgery. Surgically rebuild the inconsistent tables. **Avoid** unless the partial-state is well-understood.
+3. **If pytest hangs anyway:** the DB might still be polluted, OR a process from the prior run is still holding a connection-pool lock. Kill any lingering python.exe processes (`tasklist | grep python`; `taskkill /PID <pid>`).
+4. **Validate consistency before pytest:** quick MCP probe — `SELECT version_num FROM alembic_version` should match HEAD; `\d <key tables>` should show expected columns.
+
+**Before running `alembic downgrade base` or `upgrade head` in a session:**
+
+- **Anticipate seed-data conflicts.** If the migration chain includes seed inserts (e.g., 0035 baseline games data, 0040+ enrichment seeds), partial downgrade-then-re-upgrade may hit UniqueViolations as old seeds re-conflict with new ones. Reset the DB BEFORE the cycle, not after a failure.
+- **Prefer single-step bounces.** Most pre-push verification needs only a one-step bounce of the most recent migration. `alembic downgrade -1 ; alembic upgrade head` is enough to refresh the most-recent migration's content into the DB.
+
+### Hung-Pytest Detection Signal
+
+If pytest doesn't write any output to its task file within 60 seconds of launch, suspect a hang. Don't wait — investigate:
+
+1. `tasklist | grep python` — is the process running?
+2. Check pytest's output file size — has it grown? If 0 bytes after 60s, hang likely.
+3. MCP probe: `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle'` — long-running queries OR lock-waits visible.
+4. If hung, terminate the process. **Don't wait overnight.**
+
+### Anti-Recurrence Test
+
+Before launching pytest after any alembic command in a session:
+
+1. Did the alembic command complete with exit 0? **If no:** investigate the failure; do NOT assume next invocation will recover.
+2. Does `SELECT version_num FROM alembic_version` show the expected HEAD? **If no:** DB is in partial state; reset before pytest.
+3. If pytest hangs >60 seconds without output, terminate immediately. Do NOT wait.
+4. Cumulative time spent on pytest hangs in a single session > 5 min? Switch to PM-as-Builder OR bounce the DB OR kill all lingering python processes.
+
+### Cross-References
+
+- Pattern 93 (SELECT-star view recreation antipattern) — sister discipline from same session 98 fix-pass; Pattern 93 was the root cause that drove the `downgrade base` attempt; Pattern 94 is the operational consequence.
+- `feedback_idempotent_migration_drops.md` — `IF EXISTS` discipline for downgrade safety; reduces but doesn't eliminate partial-downgrade risk.
+- `feedback_subagent_dispatch_lessons.md` Lesson 3 — parallel-burst worktree contention is a different shape of the same root-cause class (shared mutable state across pytest invocations).
+
+### Source
+
+- `memory/feedback_persistent_test_db_state_pollution_hung_pytest.md` — session 98 origin memo with the 12-hour hang + 30-second single-step-bounce recovery.
+
+---
+
+## Pattern 95: Migration Trigger-Function Whitespace is Load-Bearing for Round-Trip CI Gate Snapshots (ALWAYS Preserve Verbatim — Do Not Reformat)
+
+**Severity:** LOW-MEDIUM — a Builder or reviewer reformatting whitespace in a migration's trigger-function HEREDOC breaks the round-trip CI gate's snapshot-parity assertion. The catch is structural (round-trip parity test fails) and the fix is mechanical (revert the whitespace), but the cost of investigating "why is this snapshot failing when nothing changed behaviorally?" is non-trivial. Promotion source: session 98 Slot 4 S68 nit on PR #1173 + slot 0076 precedent.
+
+### Problem / Trigger
+
+The round-trip CI gate uses `pg_get_functiondef()` to snapshot trigger function bodies for parity assertions across `alembic upgrade head; alembic downgrade base; alembic upgrade head` cycles. PostgreSQL preserves indentation and whitespace verbatim in the function body when it serializes via `pg_get_functiondef`. **Reformatting indentation in the trigger function HEREDOC** (e.g., changing tabs to spaces, normalizing leading whitespace, or running `ruff format` on the Python file in a way that touches the HEREDOC contents) changes the snapshot output even when behavior is unchanged.
+
+The round-trip parity assertion sees the snapshot mismatch and fails — even though no behavioral change occurred and the migration is correct. The signal is real (snapshot mismatch) but is interpreted as a structural problem rather than a whitespace problem until someone inspects the diff and notices the whitespace-only change.
+
+### Concrete Instances
+
+**Slot 0076 (V2.42 sub-amendment A; PR #1098) precedent:** the `set_updated_at()` trigger function HEREDOC was originally tab-indented; a reformatting pass converted to spaces. The round-trip CI gate's snapshot test caught the mismatch. Resolution: revert the whitespace to original.
+
+**Slot 4 (Migration 0088; session 98 PR #1173) reaffirmation:** S68 nit raised the question "should the trigger function HEREDOC be reformatted?" The audit response was "no — Pattern 95 candidate; whitespace is load-bearing." The slot 0076 precedent had not yet been promoted to a named Pattern; session 99 promotes both precedents into Pattern 95 as part of cleanup epic Slot 5 codification.
+
+### The Pattern / Rule
+
+> Migration trigger-function HEREDOCs (`op.execute("CREATE OR REPLACE FUNCTION ... AS $$ ... $$ LANGUAGE plpgsql;")`) MUST preserve whitespace verbatim across the migration's lifetime. Reviewers, formatters, and Builder agents MUST NOT reformat indentation in the HEREDOC body. The round-trip CI gate's `pg_get_functiondef()` snapshot parity assertion is structurally sensitive to whitespace; reformatting breaks the gate even when behavior is unchanged.
+
+### How to Apply
+
+**For Builder agents authoring migration trigger functions:**
+
+1. **Author the HEREDOC body with stable indentation upfront** — prefer 4-space indent (Python convention) for the SQL inside the HEREDOC. Once shipped, do NOT change indentation in a later edit.
+2. **Add a comment above the HEREDOC noting whitespace is load-bearing:**
+   ```python
+   # WHITESPACE NOTE (Pattern 95): the trigger function body below is
+   # snapshotted by the round-trip CI gate via pg_get_functiondef().
+   # Do NOT reformat indentation — Pattern 95 in DEVELOPMENT_PATTERNS.
+   op.execute("""
+       CREATE OR REPLACE FUNCTION ... AS $$
+           BEGIN
+               ...
+           END;
+       $$ LANGUAGE plpgsql;
+   """)
+   ```
+3. **If `ruff format` or similar tooling would touch the HEREDOC**, exclude the migration file from the format target OR ensure the formatter respects HEREDOC boundaries (most do).
+
+**For reviewers + Tier 1 Momentum fix-pass authors:**
+
+1. If a finding suggests reformatting indentation in a migration trigger HEREDOC, **REJECT** the finding. Either close as "Pattern 95: whitespace load-bearing" or escalate to PM for adjudication if the original whitespace is genuinely malformed.
+2. If round-trip CI gate fails with a snapshot mismatch but no behavioral change is evident, **inspect the diff for whitespace-only changes** in trigger function HEREDOCs before pursuing other root causes.
+
+### Why This Surfaces Now (Pattern 87 Interaction)
+
+Pattern 87 (Append-Only Migration Files) makes shipped migration files immutable. The whitespace constraint applies *before merge* — once a migration is merged with a given trigger function HEREDOC indentation, that indentation is frozen by Pattern 87 anyway. Pattern 95 is the *pre-merge* discipline that prevents whitespace churn from breaking the round-trip CI gate during the fix-pass cycle (when the migration is still editable per Pattern 87's not-yet-merged carve-out).
+
+### Anti-Recurrence Test
+
+Before any edit to a migration trigger function HEREDOC:
+
+1. Is the edit a whitespace-only change? **If yes:** REJECT — Pattern 95 forbids.
+2. Is the edit a behavioral change that incidentally touches indentation? **If yes:** preserve original indentation in the unchanged lines; let `pg_get_functiondef()` re-snapshot the changed function as a new baseline.
+3. Did the round-trip CI gate flag a snapshot mismatch after an edit? **First check whitespace in the diff; second check behavior.**
+
+### Cross-References
+
+- Pattern 87 (Append-Only Migration Files) — applies post-merge; Pattern 95 applies pre-merge as the discipline that prevents whitespace churn during the fix-pass cycle.
+- Pattern 93 (SELECT-star view recreation antipattern) — sister round-trip CI gate failure mode from the same Slot 4 fix-pass; different root cause (view-shape vs trigger-whitespace) but same detection surface.
+- `pg_get_functiondef()` PostgreSQL documentation — the snapshot mechanism that surfaces whitespace as load-bearing.
+
+### Source
+
+- Slot 0076 / Migration 0076 / PR #1098 (V2.42 sub-amendment A) — `set_updated_at()` trigger function HEREDOC; original precedent.
+- Slot 4 / Migration 0088 / PR #1173 (session 98) — `canonical_market_phase_log` trigger function HEREDOC; S68 nit reaffirmation.
+- Session 98 fix-pass / Ripley S60 audit memo — promotion-candidate flag.
 
 ---
 

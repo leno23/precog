@@ -1,4 +1,4 @@
-<!-- FRESHNESS: schema as of migration 0087 (V2.45 amendment + V2.47 cleanup epic Slots 1+2+3), session 97 -->
+<!-- FRESHNESS: schema as of migration 0089 (V2.45 amendment + V2.47 cleanup epic Slots 1+2+3+4), session 99 -->
 <!-- Migration 0085 (cleanup epic Slot 1, session 95) renamed:
        canonical_entity TABLE -> canonical_entities
        canonical_events.domain_id -> event_domain_id
@@ -28,10 +28,30 @@
        retire forward-pointing to a successor (when superseded) or
        to NULL (terminal tombstone).  SSOT helper
        get_active_canonical_event(id) walks the chain.
-     This doc reflects the post-Slot-3 canonical_events column
-     inventory (15 columns including superseded_by self-FK).
-     Index names and CRUD module file name unchanged across cleanup
-     epic slots 1-3 (deferred to a future cosmetic-cleanup slot). -->
+     Migration 0088 + 0089 (cleanup epic Slot 4, session 98) shipped R6
+     lifecycle redistribution + sport-tier denorm cleanup:
+       0088 R3: ADD canonical_markets.lifecycle_phase VARCHAR NOT NULL
+         DEFAULT 'open' with CHECK constraint enumerating the 5-value
+         enum (open / suspended / settling / resolved / voided);
+         ADD canonical_market_phase_log table (sibling of canonical_-
+         event_phase_log) with trigger-driven auto-population from
+         canonical_markets.lifecycle_phase mutations
+       0088 R8: REDUCE canonical_events.lifecycle_phase CHECK from
+         8 values (proposed / listed / pre_event / live / suspended /
+         settling / resolved / voided) to 5 values (proposed / listed
+         / pre_event / live / completed); per-market resolution-state
+         now lives on canonical_markets.lifecycle_phase
+       0089 R5': DROP game_states.game_status column (89.5% of rows
+         carried it vacuously; games.game_status remains as the dim-
+         tier authoritative source); current_game_states view
+         recreated with explicit 25-column list per Pattern 93
+         (SELECT * recreation antipattern catch in fix-pass).
+     This doc reflects the post-Slot-4 canonical layer including the
+     four-distinct-concerns model (canonical_events.lifecycle_phase
+     + canonical_markets.lifecycle_phase + platform markets.status
+     + canonical_markets.retired_at). Index names and CRUD module
+     file name unchanged across cleanup epic slots 1-4 (deferred to
+     a future cosmetic-cleanup slot). -->
 
 
 # Canonical Layer Relationships
@@ -333,6 +353,78 @@ Cycle prevention is layered (3-layer defense per session 97 design adjudication)
 
 Other Layer 1 tables (`canonical_entities`, `canonical_markets`, the lookup tables) carry only `retired_at` (terminal-tombstone semantics, no chain). The retirement-cascade model is canonical-events-specific and is the canonical answer to "this canonical event was actually a duplicate of that one — point new lookups at the right row, but preserve audit history".
 
+### Four-distinct-concerns lifecycle model (Migrations 0088 + 0089, cleanup epic Slot 4)
+
+ADR-118 V2.39 introduced a three-distinct-concerns model separating canonical-event lifecycle (`canonical_events.lifecycle_phase`) from platform-market state (`markets.status`) from canonical-market retirement (`canonical_markets.retired_at`). V2.39 carried an explicit revisit-trigger ("if a canonical event has N markets and M < N of them resolve divergently, where does that go?") which fired at session 94 and was redacted-then-recovered through the session 98 council per Galadriel's TIER-CONFUSION FABRICATION calibration. The recovered design is the **four-distinct-concerns model** codified by Migration 0088 (R3 + R8 bundle):
+
+| Concern | Column / Table | Tier | Semantic |
+|---|---|---|---|
+| **Event-relevance** | `canonical_events.lifecycle_phase` | canonical | "does the underlying real-world event still warrant the markets?" 5-value enum (R8-reduced): `proposed` / `listed` / `pre_event` / `live` / `completed`. Terminal value is `completed` (the event happened); voiding-the-event-itself is rare and uses `canonical_events.retired_at` (Slot 3 retirement cascade) rather than a lifecycle_phase value. |
+| **Market-relevance** (NEW) | `canonical_markets.lifecycle_phase` | canonical | "is this canonical bet still viable, and where is it in the resolution flow?" 5-value enum: `open` / `suspended` / `settling` / `resolved` / `voided`. Independent of the event-row state — `M < N` canonical markets per canonical event can be voided/suspended independently of the other `M'` markets. |
+| **Platform-market state** | `markets.status` | platform | per-platform reported status as the platform's API surfaces it. 4-value Kalshi-mirrored enum (unchanged across cleanup epic). NOT a canonical-tier concern; readers wanting "is the market viable?" use `canonical_markets.lifecycle_phase`. |
+| **Canonical-market retirement** | `canonical_markets.retired_at` | canonical | terminal-tombstone of the canonical identity; orthogonal to lifecycle_phase. A `retired_at IS NOT NULL` row should not appear in active-market reads regardless of its `lifecycle_phase`. |
+
+The four concerns are **structurally orthogonal** — no two can be derived from each other without losing fidelity. This is the answer to the session 94 D2 verdict's "is `canonical_events.lifecycle_phase` a duplicate of `games.game_status`?" question: it's not a duplicate AND `canonical_events.lifecycle_phase` is not the right column for the divergent-market-resolution case either. Each market gets its own canonical-tier resolution column on its own table.
+
+`canonical_event_phase_log` (Slot 3 / Migration 0079 origin; sibling) and `canonical_market_phase_log` (Slot 4 / Migration 0088 NEW) are the **append-only audit ledgers** for transitions across the two `lifecycle_phase` columns. Both are trigger-driven from BEFORE UPDATE on the parent table's lifecycle_phase column; both carry `transition_at`, `previous_phase`, `new_phase`, `changed_by` (text), and `note` (text). Pattern 73 SSOT vocabulary for the 5-value market-phase enum lives at `src/precog/database/constants.py:CANONICAL_MARKET_LIFECYCLE_PHASES`.
+
+### Event-vs-market timing decoupling — the load-bearing R3 semantic distinction
+
+The four-distinct-concerns model's most consequential payoff is in cross-domain stress scenarios where event-completion and market-settlement happen at different times. The diagram below shows the canonical pattern (weather domain — Cohort 9 prerequisite):
+
+```
+Weather event: Chicago O'Hare 2026-05-09 daily-high temperature
+Canonical markets: thresholds at 75°F / 80°F / 85°F / 90°F
+
+Time   | canonical_event.lifecycle_phase | canonical_markets.lifecycle_phase
+-------+---------------------------------+----------------------------------
+06:00  | pre_event                       | open (all 4 markets)
+12:00  | live   (observation window      | open
+       |         open at midnight prior)
+00:00  | completed (window closed at     | settling (all 4; waiting on NWS)
+       |            midnight)            |
+01:30  | completed                       | settling (NWS preliminary CLI
+       |                                  |   pending)
+02:00  | completed                       | resolved (NWS validated CLI
+       |                                  |   publishes; markets settle
+       |                                  |   independently per their
+       |                                  |   threshold YES/NO outcome)
+```
+
+The **2-hour decoupling between event-completion and market-settlement** is structurally required by R3's introduction of `canonical_markets.lifecycle_phase`. Under any single-column schema the interval would have to be conflated into one ambiguous "settling" state on the event row, which then couldn't represent the case where the event has truly completed (window closed; physics done) but the *market resolution* is still pending NWS validation. Galadriel session 98 § 2 walks the same shape for sports (Bills @ Chiefs 3-market voided-total) and polls and economic releases — all four domains require the decoupling.
+
+**Sports stress case (within-event divergence):**
+
+```
+Sports event: Bills @ Chiefs Week 5 NFL game
+Canonical markets: winner / spread / total
+
+Time   | canonical_event   | winner-market    | spread-market   | total-market
+       | .lifecycle_phase  | .lifecycle_phase | .lifecycle_phase| .lifecycle_phase
+-------+-------------------+------------------+-----------------+-----------------
+Q1     | live              | open             | open            | open
+Q2     | live              | open             | open            | suspended
+       |                   |                  |                 |   (mid-game
+       |                   |                  |                 |    rules
+       |                   |                  |                 |    dispute)
+Q3     | live              | open             | open            | voided
+       |                   |                  |                 |   (Kalshi
+       |                   |                  |                 |    voids the
+       |                   |                  |                 |    total
+       |                   |                  |                 |    market)
+Q4     | live              | open             | open            | voided
+END    | completed         | settling         | settling        | voided
++10min | completed         | resolved         | resolved        | voided
+```
+
+The total market's transition through `suspended` → `voided` happens *while the event is still live* and *while the other two markets continue to trade*. Pre-R6 schema had no place for this state; post-R6 the divergence lives in the individual `canonical_markets.lifecycle_phase` values. The audit history is preserved in `canonical_market_phase_log` for all three markets — readers can reconstruct exactly when the total was suspended vs voided, and by whom.
+
+### Sport-tier denorm cleanup (Slot 4 / Migration 0089 / R5')
+
+Migration 0089 DROPped `game_states.game_status` (89.5% of historical rows carried this column vacuously per the session 98 input memo § 0 probe 7). The dim-tier `games.game_status` column remains as the authoritative source for ESPN's reported game-clock state; the SCD-2-versioned `game_states` fact table reconstructs transition history via period + clock_seconds adjacency. **Important: `game_status` is sport-tier, NOT canonical-tier.** The 5-axis tier-separation test (Pattern 92, DEVELOPMENT_PATTERNS V1.45) keys on this distinction.
+
+The `current_game_states` view was recreated in Migration 0089 with an **explicit 25-column list** (NOT `SELECT *`) to avoid the view-recreation antipattern that surfaced as 14 round-trip CI gate failures during the session 98 fix-pass. Pattern 93 (SELECT-star view recreation antipattern) in DEVELOPMENT_PATTERNS V1.45 codifies this discipline; Migration 0044 is grandfathered (it introduced the view-dance pattern with `SELECT *` pre-Pattern-93) per Pattern 87 immutability.
+
 ---
 
 ## Three example query traversals
@@ -493,11 +585,13 @@ The catalog stays **tight on current state** rather than carrying placeholder ro
 
 ## Cross-references
 
-- **Architectural rules:** ADR-118 V2.46 § "Changes in v2.46:" (Items 2/3/5/7/9/10 + cross-cutting findings CC1/CC2/CC3 + N1-N5 deferred backlog) — `docs/foundation/ARCHITECTURE_DECISIONS.md`
-- **Schema authority:** Migration 0084 (V2.45 ratified, PR #1144) — `src/precog/database/alembic/versions/0084_canonical_layer_redesign.py`
-- **Schema summary:** `docs/database/DATABASE_SCHEMA_SUMMARY_V2.4.md` (post-Migration 0084 refresh; canonical home for table-by-table shape inventory)
+- **Architectural rules:** ADR-118 V2.47 § "Changes in v2.47:" (Slot 5 / cleanup epic close-out — Slots 1-4 ratification + R6 codification + Pattern 82 V2 scope-narrowing + V2.40 Item 4 pin retirement) — `docs/foundation/ARCHITECTURE_DECISIONS.md`
+- **Predecessor amendment:** ADR-118 V2.46 § "Changes in v2.46:" (Items 2/3/5/7/9/10 + cross-cutting findings CC1/CC2/CC3 + N1-N5 deferred backlog) — superseded by V2.47 cleanup-epic ratification; V2.46 prose preserved in-doc per amendment-text immutability
+- **Schema authority (post-cleanup-epic):** Migration 0089 (cleanup epic Slot 4 close; alembic_head=0089 verified session 99) — `src/precog/database/alembic/versions/0089_*.py`; Migration 0088 (Slot 4 R3+R8) + 0087 (Slot 3 retirement cascade) + 0086 (Slot 2 FK direction) + 0085 (Slot 1 naming bundle) are the cleanup-epic migrations
+- **Schema summary:** `docs/database/DATABASE_SCHEMA_SUMMARY_V2.4.md` (freshness marker amended-in-place to alembic_head=0089; canonical home for table-by-table shape inventory)
 - **V2.46 design-review pipeline:** `memory/design_review_v246_synthesis.md` (PM synthesis + user adjudications, binding) + `memory/design_review_v246_galadriel_memo.md` + `memory/design_review_v246_holden_memo.md` + `memory/design_review_v246_input_memo.md` (session 90 architectural reasoning capture)
-- **Patterns referenced:** Pattern 6 (Immutable Versioning — by analogy for Item 9e re-tagging), Pattern 73 (SSOT — Items 7 + 9 + CC2), Pattern 84 (NOT VALID + VALIDATE — N4 future migration shape), Pattern 86 (Living-Doc Freshness Markers — top of this doc), Pattern 87 (Append-only Migrations — V2.46 ships zero edits to migrations 0001-0084)
+- **V2.47 design-review pipeline (R6 origin):** `memory/design_review_lifecycle_phase_galadriel_memo.md` (5-axis test origin + TIER-CONFUSION FABRICATION calibration + R6 verdict) + `memory/design_review_lifecycle_phase_holden_memo.md` + `memory/design_review_lifecycle_phase_synthesis.md`
+- **Patterns referenced:** Pattern 6 (Immutable Versioning — by analogy for Item 9e re-tagging), Pattern 73 (SSOT — Items 7 + 9 + CC2, plus Slot 3 cycle-prevention write-surface = validation-surface), Pattern 82 V2 (CONSTRAINT TRIGGER scope-narrowed to canonical_markets post-Slot-2), Pattern 84 (NOT VALID + VALIDATE — Slot 2 by-analogy 3rd use precedent), Pattern 86 (Living-Doc Freshness Markers — top of this doc), Pattern 87 (Append-only Migrations — cleanup epic ships zero edits to migrations 0001-0084), Pattern 92 (5-axis tier-separation test — design-discipline forward guard against the session 94 D2 recurrence), Pattern 93 (SELECT-star view recreation antipattern — Migration 0089 fix-pass catch), Pattern 95 (migration trigger-function whitespace round-trip fragility)
 
 ---
 

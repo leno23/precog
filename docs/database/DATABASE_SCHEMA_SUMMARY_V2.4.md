@@ -1400,7 +1400,7 @@ in session 78 cascades the rest).
 ## Freshness Marker Discipline (Pattern 86)
 
 This document and other living canonical docs (ARCHITECTURE_DECISIONS.md,
-MASTER_REQUIREMENTS_V2.26.md) carry a freshness marker as an HTML comment
+MASTER_REQUIREMENTS_V2.27.md) carry a freshness marker as an HTML comment
 near the top of the file.  V2.3 example:
 
 ```markdown

@@ -1,9 +1,14 @@
 # Master Requirements Document
 
 ---
-**Version:** 2.26
-**Last Updated:** 2026-04-23
+**Version:** 2.27
+**Last Updated:** 2026-05-10
 **Status:** ✅ Current - Authoritative Requirements
+**Supersedes:** V2.26 (deleted per supersede-and-delete convention; PR #979 / PR #1009 / PR #1018 / PR #1063 / PR #1118 / PR #1140 / PR #1144 precedent — convention applies because the version-number is in the filename; ADR-118 uses a different convention because its filename is stable, see ADR-118 V2.47 Supersedes line)
+**Changes in v2.27 (Session 99, 2026-05-10):**
+- **CANONICAL-MARKET LIFECYCLE-PHASE INDEPENDENCE (R6 codification, Slot 5 of cleanup epic #1155):** Added REQ-CANON-LIFECYCLE-2 (canonical_market lifecycle states represent independently of canonical_event lifecycle) and REQ-CANON-RESOLUTION-DIVERGENCE-1 (per-canonical-market resolution-state divergence from canonical-event lifecycle). Both REQs codify the R6 = R3 + R5' + R8 architectural decision shipped in cleanup epic Slot 4 (Migrations 0088 + 0089, session 98 PR #1173). The 5-value `canonical_markets.lifecycle_phase` enum (`open` / `suspended` / `settling` / `resolved` / `voided`) + `canonical_event_phase_log` + `canonical_market_phase_log` append-only audit ledgers encode the multi-market resolution-divergence stress case (Bills @ Chiefs 3-market voided-total) and the weather event-vs-market timing decoupling stress case (NWS publication lag at observation-window close). Closes ADR-118 V2.39's revisit-trigger anticipation.
+- **CROSS-REFERENCES:** ADR-118 V2.47 (Slot 5 amendment — cleanup epic close-out + R6 codification + Pattern 82 V2 scope-narrowing + V2.40 Item 4 pin retirement); ADR-118 V2.39 (R6 revisit-trigger origin); ADR-118 V2.40 (Item 4 pin set, now formally retired); DEVELOPMENT_PATTERNS V1.45 (Pattern 92 5-axis tier-separation test surfaces canonical-vs-platform-vs-domain-spoke discipline that informed R6); `docs/database/CANONICAL_LAYER_RELATIONSHIPS.md` (four-distinct-concerns model + event-vs-market timing decoupling diagram); session 98 council memos (`design_review_lifecycle_phase_galadriel_memo.md`, `design_review_lifecycle_phase_holden_memo.md`, `design_review_lifecycle_phase_synthesis.md`); PR #1173 (Migrations 0088 + 0089).
+- Total requirements: 153 -> 155
 **Changes in v2.26 (Session 71, 2026-04-23):**
 - **LLM/MCP INTEGRATION REQUIREMENTS:** Added Section 4.18 with REQ-LLM-001 through REQ-LLM-016
 - **PATH B SERVICE-LAYER ARCHITECTURE:** FastAPI + shared Pydantic contracts as SSOT; MCP and web UI are parallel consumers
@@ -340,7 +345,7 @@ precog/
 - **This Document**: Master requirements (overview, phases, objectives)
 - **Foundation Documents** (in `docs/foundation/`):
   1. `PROJECT_OVERVIEW_V1.5.md` - System architecture and tech stack
-  2. `MASTER_REQUIREMENTS_V2.26.md` - This document (requirements through Phase 10)
+  2. `MASTER_REQUIREMENTS_V2.27.md` - This document (requirements through Phase 10)
   3. `MASTER_INDEX.md` - Complete document inventory
   4. `ARCHITECTURE_DECISIONS.md` - All ADRs with design rationale (Phase 0-4.5, ADR-118 Canonical Identity/Matching/Event-State Layer + ADR-119 Business-Key Cleanup + Weather Phase 1; ADR-117 amended for series.series_key Tier-3 reclassification; V2.38 encodes ADR-118 Cohort 1 amendment per #996; V2.39 encodes ADR-118 Cohort 2 amendment session 73 — `canonical_markets` DDL tightened, `lifecycle_phase` exclusion + `updated_at` trigger template + Pattern 82 non-application + ON DELETE RESTRICT ratified; V2.40 encodes ADR-118 Cohort 1 carry-forward amendment per #1011 / session 75 — partial unique index on `canonical_participant_roles` cross-domain singleton + `canonical_events.lifecycle_phase` CHECK + Pattern 82 V2 forward-only direction policy + Pattern 83 seed-subquery NULL guard promotion)
   5. `REQUIREMENT_INDEX_V1.17.md` - Systematic requirement catalog
@@ -1821,6 +1826,66 @@ Before any real-money trading is enabled:
 - Credential rotation, revocation, and expiry are independent of user-credential lifecycle
 - The policy definition itself is an ADR candidate (ADR-tracker #983 scope, or a new ADR-tracker if it warrants its own)
 - Related: REQ-LLM-008 (auth/authorization the scoped principal authenticates against)
+
+---
+
+### 4.19 Canonical-Tier Lifecycle Independence (R6 codification, Slot 5 of cleanup epic #1155)
+
+Section 4.19 was added in V2.27 (session 99) to codify the R6 architectural decision shipped in cleanup epic Slot 4 (Migrations 0088 + 0089). Both REQs are anchored to ADR-118 V2.47 § V2.47-D (Slot 4 lifecycle redistribution + sport-tier denorm) and to the session 98 design-review council (Galadriel + Holden + synthesis).
+
+#### REQ-CANON-LIFECYCLE-2: Canonical-Market Lifecycle State Represents Independently of Canonical-Event Lifecycle State
+**Priority:** High
+**Phase:** Phase B.5 (Canonical Layer Foundation; cleanup epic #1155 ratification)
+**Status:** ✅ Complete (Migration 0088 shipped session 98, PR #1173)
+**Cross-References:** ADR-118 V2.47-D, ADR-118 V2.39 (revisit-trigger origin), `docs/database/CANONICAL_LAYER_RELATIONSHIPS.md` (four-distinct-concerns model)
+
+> **Note on `-2` suffix (no `REQ-CANON-LIFECYCLE-1` predecessor):** The two-column R6 model (`canonical_events.lifecycle_phase` + `canonical_markets.lifecycle_phase`) emerged at session 98 from Galadriel's TIER-CONFUSION-FABRICATION calibration; the `canonical_events.lifecycle_phase` column was introduced via Migration 0070 (Cohort 1) without a corresponding `REQ-CANON-LIFECYCLE-1` — its semantics were captured indirectly via ADR-118 V2.39's three-distinct-concerns model. REQ-CANON-LIFECYCLE-2 codifies the second column (canonical_markets) explicitly; the `-2` numbering reflects ordinal-in-R6-model not chronological-in-REQ-system. A future REQ-CANON-LIFECYCLE-1 may be backfilled if Cohort 5+ matcher work requires formal codification of the canonical_events column semantics; until then, the orphan-numbering is intentional and traces to the R6 two-column architectural decision.
+
+**Requirement:**
+The schema MUST represent canonical-market lifecycle state independently of canonical-event lifecycle state, allowing **M < N** canonical markets per canonical event to be voided / suspended independently of the other M' markets and independently of the event-row state. Encoded via:
+
+- `canonical_markets.lifecycle_phase` (NOT NULL VARCHAR; 5-value CHECK enum: `open` / `suspended` / `settling` / `resolved` / `voided`) — represents market-state (is this canonical bet still viable, and where is it in the resolution flow?)
+- `canonical_events.lifecycle_phase` (NOT NULL VARCHAR; 5-value CHECK enum reduced from 8 values pre-R8: `proposed` / `listed` / `pre_event` / `live` / `completed`) — represents event-relevance (does the underlying real-world event still warrant the markets?)
+- `canonical_event_phase_log` and `canonical_market_phase_log` — append-only audit ledgers, trigger-driven from their respective tables' lifecycle_phase mutations
+
+**Why this matters:**
+Pre-R6, a single `canonical_events.lifecycle_phase` column attempted to represent both event-relevance and market-relevance ("is the bet still meaningful?"). The 8-value enum (proposed / listed / pre_event / live / suspended / settling / resolved / voided) silently conflated two orthogonal concerns and could not represent the stress case where ONE canonical market resolves divergently from its siblings on the same canonical event.
+
+**Stress case codified by this requirement:** Bills @ Chiefs Week 5 — 3 canonical markets (winner, spread, total). Mid-game the total market is voided due to a rules dispute; winner + spread settle normally. The voided-total state is canonical-tier-independent of the event's `completed` state and of the other two markets' `resolved` state. Under pre-R6 schema this divergence had nowhere to live; under R6 it lives in `canonical_markets.lifecycle_phase = 'voided'` for the total alongside `canonical_markets.lifecycle_phase = 'resolved'` for winner + spread and `canonical_events.lifecycle_phase = 'completed'` for the event row.
+
+**Success Criteria:**
+- `canonical_markets.lifecycle_phase` column exists with the 5-value CHECK constraint (verified live via MCP, session 99 — Migration 0088)
+- `canonical_market_phase_log` audit ledger exists with trigger-driven auto-population (verified live via MCP, session 99 — Migration 0088)
+- `canonical_events.lifecycle_phase` enum reduced 8 → 5 values per R8 (verified live via MCP, session 99 — Migration 0088)
+- PositionManager / StrategyManager read paths against `canonical_markets` filter by `lifecycle_phase IN ('open', 'suspended')` (deferred to matcher slot ~session 101; tracked at #1168 + #1174)
+
+#### REQ-CANON-RESOLUTION-DIVERGENCE-1: Per-Canonical-Market Resolution-State Divergence from Canonical-Event Lifecycle
+**Priority:** High
+**Phase:** Phase B.5 (Canonical Layer Foundation; cleanup epic #1155 ratification)
+**Status:** ✅ Complete (Migration 0088 shipped session 98, PR #1173)
+**Cross-References:** ADR-118 V2.47-D, Galadriel session 98 memo § 2 (cross-domain stress test), CANONICAL_LAYER_RELATIONSHIPS.md (event-vs-market timing decoupling diagram)
+
+**Requirement:**
+The schema MUST support per-canonical-market resolution-state divergence from canonical-event lifecycle in BOTH directions: (a) market resolves while event is still active, (b) event completes while market is still settling. The 5-value `canonical_markets.lifecycle_phase` enum + the 5-value `canonical_events.lifecycle_phase` enum (R8) together carry this expressivity without conflation.
+
+**Stress cases codified by this requirement:**
+
+1. **Sports — within-event divergence (Bills @ Chiefs).** 3 canonical markets, total voided mid-game; winner + spread settle normally at game end. The voided market diverges from the resolved markets on the same `canonical_events` row. See REQ-CANON-LIFECYCLE-2 for full traversal table.
+
+2. **Weather — event-completes-but-market-settles-later (Chicago O'Hare daily-high temperature).** Canonical event = scheduled observation window (midnight to midnight local). Multiple canonical markets at 75/80/85/90°F thresholds. Window closes at midnight; NWS validation lags 1-2 hours; markets settle on the validated CLI publication.
+   - `canonical_event.lifecycle_phase = 'completed'` at midnight (window closed; event done)
+   - `canonical_markets.lifecycle_phase = 'settling'` for the 1-2 hour interval (NWS hasn't published)
+   - `canonical_markets.lifecycle_phase = 'resolved'` after NWS publishes
+   - The decoupling between event-completion and market-settlement is structurally required by R3's introduction of `canonical_markets.lifecycle_phase`. Under any single-column schema this would have to be conflated into one ambiguous "settling" state.
+
+3. **Polls / Economic releases (forward-compatible).** Same structural shape as weather: scheduled release date marks event completion; market settlement happens on the print/release. Already survives R6 per the session 98 cross-domain stress test (Galadriel memo § 2).
+
+4. **Data-revision edge case (codified as terminal-state semantic).** Once `canonical_markets.lifecycle_phase = 'resolved'`, the market is final per Kalshi rules; data revisions (e.g., CPI revision 2 weeks later) do NOT reopen settlement. The revision is a *new observation* (canonical_observations row with later valid_at), not a state transition on the original market.
+
+**Success Criteria:**
+- The 4 stress cases above are individually representable in the post-Migration-0088 schema without ambiguity (verified via cross-domain stress test in Galadriel session 98 memo § 2)
+- The four-distinct-concerns model (`canonical_events.lifecycle_phase` + `canonical_markets.lifecycle_phase` + platform `markets.status` + `canonical_markets.retired_at`) is documented in `CANONICAL_LAYER_RELATIONSHIPS.md` and referenced from ADR-118 V2.47-D
+- The 5-axis tier-separation test (Pattern 92, DEVELOPMENT_PATTERNS V1.45) is available as a forward-discipline mechanism to prevent recurrence of the session 94 D2 duplicate verdict that this REQ recovers from
 
 ---
 

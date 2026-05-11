@@ -1,6 +1,6 @@
 # Database Schema Summary
 
-<!-- RETIRED: V2.3 (alembic_head=0077, 2026-04-29) is superseded by V2.4 (current canonical, alembic_head=0086, 2026-05-07). Kept for changelog history per Pattern 86 (DEVELOPMENT_PATTERNS V1.39+). For current schema state see DATABASE_SCHEMA_SUMMARY_V2.4.md. Banner added Slot 2 polish bundle, session 96 (Ripley P2-2). -->
+<!-- RETIRED: V2.3 (alembic_head=0077, 2026-04-29) is superseded by V2.4 (current canonical, alembic_head=0089, 2026-05-09). Kept for changelog history per Pattern 86 (DEVELOPMENT_PATTERNS V1.39+). For current schema state see DATABASE_SCHEMA_SUMMARY_V2.4.md. Banner added Slot 2 polish bundle, session 96 (Ripley P2-2); V2.4 alembic_head reference refreshed at Slot 5 V2.47 codification, session 99 (was 0086 → now 0089 reflecting Slot 4 lifecycle redistribution). -->
 
 <!-- FRESHNESS: alembic_head=0077, verified=2026-04-29, tables=58, migrations=76, last_changelog_migration=0077 -->
 <!--
