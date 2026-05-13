@@ -69,8 +69,8 @@ def seeded_market(db_pool: Any) -> Any:
         # not market creation semantics — raw INSERT keeps the test focused.
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -89,7 +89,7 @@ def seeded_market(db_pool: Any) -> Any:
         )
         market_pk = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_pk}", market_pk),
         )
 
@@ -128,7 +128,7 @@ def _insert_edge(
         cur.execute(
             f"""
             INSERT INTO edges (
-                edge_key, market_id, model_id,
+                edge_key, platform_market_id, model_id,
                 expected_value, true_win_probability,
                 market_implied_probability, market_price,
                 actual_outcome, settlement_value, resolved_at,

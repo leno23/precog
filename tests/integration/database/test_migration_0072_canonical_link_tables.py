@@ -114,11 +114,11 @@ _EVENT_LINKS_COLS: list[tuple[str, str, str, str | None, int | None]] = [
 
 
 def _seed_platform_event(suffix: str) -> int:
-    """Seed a platform events row to back canonical_event_links.platform_event_id."""
+    """Seed a platform_events row to back canonical_event_links.platform_event_id."""
     with get_cursor(commit=True) as cur:
         cur.execute(
             """
-            INSERT INTO events (
+            INSERT INTO platform_events (
                 platform_id, external_id, category, title, event_key
             ) VALUES (%s, %s, %s, %s, %s)
             RETURNING id
@@ -135,9 +135,9 @@ def _seed_platform_event(suffix: str) -> int:
 
 
 def _cleanup_platform_event(platform_event_id: int) -> None:
-    """Remove a platform events row seeded by _seed_platform_event."""
+    """Remove a platform_events row seeded by _seed_platform_event."""
     with get_cursor(commit=True) as cur:
-        cur.execute("DELETE FROM events WHERE id = %s", (platform_event_id,))
+        cur.execute("DELETE FROM platform_events WHERE id = %s", (platform_event_id,))
 
 
 # =============================================================================
@@ -266,12 +266,12 @@ def test_market_links_platform_market_id_fk_is_cascade(db_pool: Any) -> None:
             FROM pg_constraint
             WHERE conrelid = 'canonical_market_links'::regclass
               AND contype = 'f'
-              AND pg_get_constraintdef(oid) LIKE '%markets(id)%'
+              AND pg_get_constraintdef(oid) LIKE '%platform_markets(id)%'
               AND pg_get_constraintdef(oid) NOT LIKE '%canonical_markets(id)%'
             """
         )
         row = cur.fetchone()
-    assert row is not None, "FK to markets(id) missing"
+    assert row is not None, "FK to platform_markets(id) missing"
     fk_def = row["def"]
     assert "ON DELETE CASCADE" in fk_def, (
         f"platform_market_id FK must be ON DELETE CASCADE; got: {fk_def}"
@@ -363,11 +363,11 @@ def test_event_links_platform_event_id_fk_is_cascade(db_pool: Any) -> None:
             FROM pg_constraint
             WHERE conrelid = 'canonical_event_links'::regclass
               AND contype = 'f'
-              AND pg_get_constraintdef(oid) LIKE '%REFERENCES events(id)%'
+              AND pg_get_constraintdef(oid) LIKE '%REFERENCES platform_events(id)%'
             """
         )
         row = cur.fetchone()
-    assert row is not None, "FK to events(id) missing"
+    assert row is not None, "FK to platform_events(id) missing"
     fk_def = row["def"]
     assert "ON DELETE CASCADE" in fk_def, (
         f"platform_event_id FK must be ON DELETE CASCADE; got: {fk_def}"
@@ -444,7 +444,7 @@ def test_market_links_canonical_market_delete_restrict_fires(db_pool: Any) -> No
 
 
 def test_market_links_platform_market_delete_cascades_link(db_pool: Any) -> None:
-    """DELETE FROM markets cascades the link out (L4 behavioral proof)."""
+    """DELETE FROM platform_markets cascades the link out (L4 behavioral proof)."""
     suffix = uuid.uuid4().hex[:8]
     seeded_event_id = _seed_canonical_event(suffix)
     seeded_market_id = _seed_canonical_market(seeded_event_id, suffix)
@@ -465,9 +465,12 @@ def test_market_links_platform_market_delete_cascades_link(db_pool: Any) -> None
             )
             link_id = int(cur.fetchone()["id"])
 
-        # DELETE FROM markets — the link should CASCADE-delete.
+        # DELETE FROM platform_markets — the link should CASCADE-delete.
         with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM markets WHERE id = %s", (seeded_platform_market_id,))
+            cur.execute(
+                "DELETE FROM platform_markets WHERE id = %s",
+                (seeded_platform_market_id,),
+            )
 
         # Verify link gone.
         with get_cursor() as cur:
@@ -529,7 +532,7 @@ def test_event_links_canonical_event_delete_restrict_fires(db_pool: Any) -> None
 
 
 def test_event_links_platform_event_delete_cascades_link(db_pool: Any) -> None:
-    """DELETE FROM events cascades the link out (L4 behavioral proof on event tier)."""
+    """DELETE FROM platform_events cascades the link out (L4 behavioral proof on event tier)."""
     suffix = uuid.uuid4().hex[:8]
     seeded_event_id = _seed_canonical_event(suffix)
     seeded_platform_event_id = _seed_platform_event(suffix)
@@ -550,7 +553,10 @@ def test_event_links_platform_event_delete_cascades_link(db_pool: Any) -> None:
             link_id = int(cur.fetchone()["id"])
 
         with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM events WHERE id = %s", (seeded_platform_event_id,))
+            cur.execute(
+                "DELETE FROM platform_events WHERE id = %s",
+                (seeded_platform_event_id,),
+            )
 
         with get_cursor() as cur:
             cur.execute("SELECT id FROM canonical_event_links WHERE id = %s", (link_id,))

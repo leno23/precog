@@ -165,10 +165,10 @@ class TestValidateCriticalTablesIntegration:
         # Alternate between exists and missing (17 tables total)
         mock_fetch.side_effect = [
             [{"exists": True}],  # platforms
-            [{"exists": False}],  # series - missing
-            [{"exists": True}],  # events
-            [{"exists": False}],  # markets - missing
-            [{"exists": True}],  # market_snapshots
+            [{"exists": False}],  # platform_series - missing
+            [{"exists": True}],  # platform_events
+            [{"exists": False}],  # platform_markets - missing
+            [{"exists": True}],  # platform_market_snapshots
             [{"exists": True}],  # games
             [{"exists": True}],  # game_states
             [{"exists": True}],  # game_odds
@@ -185,8 +185,8 @@ class TestValidateCriticalTablesIntegration:
 
         missing = validate_critical_tables()
 
-        assert "series" in missing
-        assert "markets" in missing
+        assert "platform_series" in missing
+        assert "platform_markets" in missing
         assert len(missing) == 2
 
     # Unit test - mock OK (tests custom table list handling logic)

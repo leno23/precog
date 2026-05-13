@@ -219,7 +219,7 @@ def _seed_temporal_alignment_fk_chain(suffix: str) -> dict[str, int]:
         # Event.
         cur.execute(
             """
-            INSERT INTO events (
+            INSERT INTO platform_events (
                 platform_id, external_id, category, subcategory, title,
                 status, game_id, event_key
             )
@@ -239,8 +239,8 @@ def _seed_temporal_alignment_fk_chain(suffix: str) -> dict[str, int]:
         # Market.
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             )
             VALUES ('test_platform', %s, %s, %s, %s,
@@ -260,8 +260,8 @@ def _seed_temporal_alignment_fk_chain(suffix: str) -> dict[str, int]:
         # Market snapshot.
         cur.execute(
             """
-            INSERT INTO market_snapshots (
-                market_id, yes_ask_price, no_ask_price, spread, volume,
+            INSERT INTO platform_market_snapshots (
+                platform_market_id, yes_ask_price, no_ask_price, spread, volume,
                 row_current_ind, row_start_ts
             )
             VALUES (%s, %s, %s, %s, %s, TRUE, NOW())
@@ -314,14 +314,25 @@ def _cleanup_temporal_alignment_fk_chain(ids: dict[str, int]) -> None:
     """
     try:
         with get_cursor(commit=True) as cur:
+            # Note: temporal_alignment.market_id no longer exists post-V2.45
+            # (Migration 0084 redesign).  This DELETE will silently no-op or
+            # fail in current schema; the test is independently
+            # broken-from-V2.45 and tracked under Cohort 5+ followups.  The
+            # 0090 substitution preserves shape only.
             cur.execute(
                 "DELETE FROM temporal_alignment WHERE market_id = %s",
                 (ids["market_id"],),
             )
-            cur.execute("DELETE FROM market_snapshots WHERE id = %s", (ids["market_snapshot_id"],))
-            cur.execute("DELETE FROM markets WHERE id = %s", (ids["market_id"],))
+            cur.execute(
+                "DELETE FROM platform_market_snapshots WHERE id = %s",
+                (ids["market_snapshot_id"],),
+            )
+            cur.execute(
+                "DELETE FROM platform_markets WHERE id = %s",
+                (ids["market_id"],),
+            )
             cur.execute("DELETE FROM game_states WHERE id = %s", (ids["game_state_id"],))
-            cur.execute("DELETE FROM events WHERE id = %s", (ids["event_id"],))
+            cur.execute("DELETE FROM platform_events WHERE id = %s", (ids["event_id"],))
             cur.execute("DELETE FROM games WHERE id = %s", (ids["game_id"],))
     except Exception:
         pass
@@ -720,7 +731,7 @@ def test_existing_rows_have_null_canonical_event_id(db_pool: Any) -> None:
     NOTE: tests in this file insert rows linked to a per-test FK chain
     via ``_seed_temporal_alignment_fk_chain`` (market_id +
     market_snapshot_id + game_state_id all unique per test).  We exclude
-    those via ``market_id NOT IN (SELECT id FROM markets WHERE
+    those via ``market_id NOT IN (SELECT id FROM platform_markets WHERE
     market_key LIKE 'MKT-TEST-0082-%')`` -- the test-row exclusion uses
     the per-test market business-key prefix.
 
@@ -735,7 +746,7 @@ def test_existing_rows_have_null_canonical_event_id(db_pool: Any) -> None:
             FROM temporal_alignment ta
             WHERE ta.canonical_event_id IS NOT NULL
               AND ta.market_id NOT IN (
-                  SELECT id FROM markets
+                  SELECT id FROM platform_markets
                   WHERE market_key LIKE 'MKT-TEST-0082-%%'
               )
             """
@@ -839,7 +850,7 @@ def test_temporal_alignment_writer_non_regression(db_pool: Any) -> None:
 
             cur.execute(
                 """
-                INSERT INTO events (
+                INSERT INTO platform_events (
                     platform_id, external_id, category, subcategory, title,
                     status, game_id, event_key
                 )
@@ -860,8 +871,8 @@ def test_temporal_alignment_writer_non_regression(db_pool: Any) -> None:
 
             cur.execute(
                 """
-                INSERT INTO markets (
-                    platform_id, event_id, external_id, ticker, title,
+                INSERT INTO platform_markets (
+                    platform_id, platform_event_id, external_id, ticker, title,
                     market_type, status, market_key
                 )
                 VALUES (
@@ -883,8 +894,8 @@ def test_temporal_alignment_writer_non_regression(db_pool: Any) -> None:
             # Snapshot at -60s; game state at -55s -- ~5s delta -> 'good'.
             cur.execute(
                 """
-                INSERT INTO market_snapshots (
-                    market_id, yes_ask_price, no_ask_price, spread, volume,
+                INSERT INTO platform_market_snapshots (
+                    platform_market_id, yes_ask_price, no_ask_price, spread, volume,
                     row_current_ind, row_start_ts
                 )
                 VALUES (%s, %s, %s, %s, %s, TRUE, %s)

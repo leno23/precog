@@ -374,9 +374,10 @@ def test_position_unrealized_pnl_calculation(
         current_price=Decimal("0.5800"),  # Entered at 0.5200
     )
 
-    # Get position with joined market data
+    # Get position with joined market data.
+    # Post-Migration-0090: positions.market_id renamed to platform_market_id.
     positions = get_current_positions()
-    pos = next((p for p in positions if p["market_id"] == market_id), None)
+    pos = next((p for p in positions if p["platform_market_id"] == market_id), None)
 
     # Unrealized P&L should be calculated
     # (0.5800 - 0.5200) * 100 contracts = $6.00

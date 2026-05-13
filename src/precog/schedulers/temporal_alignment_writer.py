@@ -69,7 +69,7 @@ _BATCH_LIMIT = 1000
 _UNALIGNED_QUERY = """
     SELECT
         ms.id AS market_snapshot_id,
-        ms.market_id,
+        ms.platform_market_id AS market_id,
         ms.row_start_ts AS snapshot_time,
         ms.yes_ask_price,
         ms.no_ask_price,
@@ -85,9 +85,9 @@ _UNALIGNED_QUERY = """
         g.id AS game_id,
         ABS(EXTRACT(EPOCH FROM (ms.row_start_ts - gs.row_start_ts)))::DECIMAL(10,2)
             AS time_delta_raw
-    FROM market_snapshots ms
-    JOIN markets m ON ms.market_id = m.id
-    JOIN events e ON m.event_id = e.id
+    FROM platform_market_snapshots ms
+    JOIN platform_markets m ON ms.platform_market_id = m.id
+    JOIN platform_events e ON m.platform_event_id = e.id
     JOIN games g ON e.game_id = g.id
     CROSS JOIN LATERAL (
         SELECT gs_inner.id, gs_inner.row_start_ts, gs_inner.game_status,

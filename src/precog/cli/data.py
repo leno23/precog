@@ -1889,12 +1889,12 @@ def matching_stats(
             # Count linked vs unlinked events
             if league:
                 cursor.execute(
-                    "SELECT COUNT(*) FROM events WHERE game_id IS NOT NULL AND subcategory = %s",
+                    "SELECT COUNT(*) FROM platform_events WHERE game_id IS NOT NULL AND subcategory = %s",
                     (league,),
                 )
             else:
                 cursor.execute(
-                    "SELECT COUNT(*) FROM events WHERE game_id IS NOT NULL "
+                    "SELECT COUNT(*) FROM platform_events WHERE game_id IS NOT NULL "
                     "AND subcategory IS NOT NULL"
                 )
             linked_count = cursor.fetchone()[0]
@@ -1920,7 +1920,7 @@ def matching_stats(
                     "SELECT subcategory, "
                     "  COUNT(*) FILTER (WHERE game_id IS NOT NULL) AS linked, "
                     "  COUNT(*) FILTER (WHERE game_id IS NULL) AS unlinked "
-                    "FROM events "
+                    "FROM platform_events "
                     "WHERE subcategory IS NOT NULL "
                     "GROUP BY subcategory ORDER BY subcategory"
                 )

@@ -316,13 +316,20 @@ def clean_test_data(db_cursor):
 
     # Cleanup before test (strict reverse FK order — RESTRICT requires children first).
     # Uses shared helper from tests/fixtures/cleanup_helpers.py.
-    from tests.fixtures.cleanup_helpers import delete_all_test_data
+    from tests.fixtures.cleanup_helpers import (
+        delete_all_test_data,
+        delete_event_with_children,
+        delete_market_with_children,
+    )
 
     delete_all_test_data(db_cursor)
-    # Delete markets (children already cleared by delete_all_test_data)
-    db_cursor.execute("DELETE FROM markets WHERE ticker LIKE 'TEST-%'")
-    db_cursor.execute("DELETE FROM events WHERE external_id LIKE 'TEST-%'")
-    db_cursor.execute("DELETE FROM series WHERE series_key LIKE 'TEST-%'")
+    # FK-aware cleanup for platform_markets / platform_events: recurses through
+    # all FK children (market_snapshots, market_trades, orderbook_snapshots, etc.)
+    # so orphans attached to TEST-% events via realistic tickers (e.g., NFL-001)
+    # are caught even though their own name pattern does not match TEST-%.
+    delete_event_with_children(db_cursor, "external_id LIKE 'TEST-%'")
+    delete_market_with_children(db_cursor, "ticker LIKE 'TEST-%'")
+    db_cursor.execute("DELETE FROM platform_series WHERE series_key LIKE 'TEST-%'")
     try:
         db_cursor.execute("DELETE FROM probability_models")
         db_cursor.execute("DELETE FROM strategies")
@@ -341,13 +348,13 @@ def clean_test_data(db_cursor):
 
     # Create test series
     db_cursor.execute("""
-        INSERT INTO series (series_key, platform_id, external_id, title, category)
+        INSERT INTO platform_series (series_key, platform_id, external_id, title, category)
         VALUES ('TEST-SERIES-NFL', 'test_platform', 'TEST-EXT-SERIES', 'Test NFL Series', 'sports')
         ON CONFLICT (series_key) WHERE row_current_ind = TRUE DO NOTHING
     """)
 
     # Get series surrogate PK for event FK (migration 0019: series_key)
-    db_cursor.execute("SELECT id FROM series WHERE series_key = 'TEST-SERIES-NFL'")
+    db_cursor.execute("SELECT id FROM platform_series WHERE series_key = 'TEST-SERIES-NFL'")
     _series_row = db_cursor.fetchone()
     _test_series_pk = _series_row["id"] if _series_row else None
 
@@ -360,7 +367,7 @@ def clean_test_data(db_cursor):
     # series row via its own MVCC snapshot.
     db_cursor.connection.commit()
 
-    from precog.database.crud_events import get_or_create_event
+    from precog.database.crud_platform_events import get_or_create_event
 
     # external_id is the canonical business key (migration 0047 dropped event_id column)
     get_or_create_event(
@@ -411,9 +418,9 @@ def clean_test_data(db_cursor):
     from tests.fixtures.cleanup_helpers import delete_all_test_data
 
     delete_all_test_data(db_cursor)
-    db_cursor.execute("DELETE FROM markets WHERE ticker LIKE 'TEST-%'")
-    db_cursor.execute("DELETE FROM events WHERE external_id LIKE 'TEST-%'")
-    db_cursor.execute("DELETE FROM series WHERE series_key LIKE 'TEST-%'")
+    db_cursor.execute("DELETE FROM platform_markets WHERE ticker LIKE 'TEST-%'")
+    db_cursor.execute("DELETE FROM platform_events WHERE external_id LIKE 'TEST-%'")
+    db_cursor.execute("DELETE FROM platform_series WHERE series_key LIKE 'TEST-%'")
     try:
         db_cursor.execute("DELETE FROM probability_models")
         db_cursor.execute("DELETE FROM strategies")
@@ -431,7 +438,7 @@ def clean_test_data(db_cursor):
 @pytest.fixture
 def sample_market_data(db_pool, clean_test_data):
     """Sample market data for testing."""
-    from precog.database.crud_events import get_event
+    from precog.database.crud_platform_events import get_event
 
     # Look up event surrogate PK (migration 0020: create_market uses integer FK)
     evt = get_event("TEST-EVT-NFL-KC-BUF")
@@ -775,7 +782,7 @@ def sample_series(db_pool, clean_test_data, sample_platform) -> str:
     from precog.database.connection import execute_query
 
     query = """
-        INSERT INTO series (series_key, platform_id, external_id, category, subcategory, title, frequency)
+        INSERT INTO platform_series (series_key, platform_id, external_id, category, subcategory, title, frequency)
         VALUES ('NFL-2025', 'kalshi', 'NFL-2025-ext', 'sports', 'nfl', 'NFL 2025 Season', 'recurring')
         ON CONFLICT (series_key) WHERE row_current_ind = TRUE DO NOTHING
         RETURNING series_key
@@ -790,11 +797,11 @@ def sample_event(db_pool, clean_test_data, sample_platform, sample_series) -> st
     from precog.database.connection import execute_query, fetch_one
 
     # Look up series surrogate PK (migration 0019: events use integer FK)
-    series_row = fetch_one("SELECT id FROM series WHERE series_key = 'NFL-2025'")
+    series_row = fetch_one("SELECT id FROM platform_series WHERE series_key = 'NFL-2025'")
     series_pk = series_row["id"] if series_row else None
 
     query = """
-        INSERT INTO events (platform_id, series_id, external_id, category, subcategory, title, status)
+        INSERT INTO platform_events (platform_id, platform_series_id, external_id, category, subcategory, title, status)
         VALUES ('kalshi', %s, 'HIGHTEST', 'sports', 'nfl', 'Super Bowl LIX', 'scheduled')
         ON CONFLICT (platform_id, external_id) DO NOTHING
         RETURNING external_id
@@ -811,15 +818,15 @@ def sample_market(db_pool, clean_test_data, sample_platform, sample_event) -> in
         Integer surrogate PK from markets(id) — post-migration 0021/0022.
     """
     from precog.database.connection import fetch_one
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     # Look up event surrogate PK (migration 0020: events use integer FK)
-    event_row = fetch_one("SELECT id FROM events WHERE external_id = 'HIGHTEST'")
+    event_row = fetch_one("SELECT id FROM platform_events WHERE external_id = 'HIGHTEST'")
     event_pk = event_row["id"] if event_row else None
 
     # Check if market already exists (by ticker, since market_id VARCHAR is dropped)
     existing = fetch_one(
-        "SELECT id FROM markets WHERE ticker = %s",
+        "SELECT id FROM platform_markets WHERE ticker = %s",
         ("HIGHTEST-25FEB05",),
     )
     if existing:

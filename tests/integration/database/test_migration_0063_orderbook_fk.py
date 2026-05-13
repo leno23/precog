@@ -39,8 +39,8 @@ import pytest
 
 from precog.database.connection import fetch_one, get_cursor
 from precog.database.crud_analytics import create_edge
-from precog.database.crud_markets import create_market, insert_orderbook_snapshot
 from precog.database.crud_orders import create_order
+from precog.database.crud_platform_markets import create_market, insert_orderbook_snapshot
 
 pytestmark = [pytest.mark.integration]
 
@@ -50,18 +50,24 @@ pytestmark = [pytest.mark.integration]
 # =============================================================================
 
 # (table, fk_column, index_name, constraint_name)
+# Post-Migration-0090: orderbook_snapshot_id renamed to platform_orderbook_snapshot_id;
+# corresponding FK constraint renamed to *_platform_orderbook_snapshot_id_fkey.
+# Migration 0063's idx_* indexes use the pre-rename column name in their identifier;
+# Migration 0090 does NOT rename idx_orders_orderbook_snapshot_id or
+# idx_edges_orderbook_snapshot_id (they live on leave-alone tables and Migration 0090
+# only renames idx_* identifiers on the 7 renaming tables).  So index names stay.
 _FK_SPEC: list[tuple[str, str, str, str]] = [
     (
         "orders",
-        "orderbook_snapshot_id",
+        "platform_orderbook_snapshot_id",
         "idx_orders_orderbook_snapshot_id",
-        "orders_orderbook_snapshot_id_fkey",
+        "orders_platform_orderbook_snapshot_id_fkey",
     ),
     (
         "edges",
-        "orderbook_snapshot_id",
+        "platform_orderbook_snapshot_id",
         "idx_edges_orderbook_snapshot_id",
-        "edges_orderbook_snapshot_id_fkey",
+        "edges_platform_orderbook_snapshot_id_fkey",
     ),
 ]
 
@@ -182,11 +188,12 @@ def test_orderbook_snapshot_fk_is_restrict(
         f"{table}.{fk_col} FK delete_rule must be RESTRICT "
         f"(provenance preservation), got {row['delete_rule']!r}"
     )
-    assert row["referenced_table"] == "orderbook_snapshots", (
-        f"{table}.{fk_col} must reference orderbook_snapshots, got {row['referenced_table']!r}"
+    assert row["referenced_table"] == "platform_orderbook_snapshots", (
+        f"{table}.{fk_col} must reference platform_orderbook_snapshots, "
+        f"got {row['referenced_table']!r}"
     )
     assert row["referenced_column"] == "id", (
-        f"{table}.{fk_col} must reference orderbook_snapshots(id), "
+        f"{table}.{fk_col} must reference platform_orderbook_snapshots(id), "
         f"got ...({row['referenced_column']!r})"
     )
 
@@ -255,14 +262,14 @@ def test_create_order_with_orderbook_snapshot_id_persists_fk(
 
     with get_cursor() as cur:
         cur.execute(
-            "SELECT orderbook_snapshot_id FROM orders WHERE id = %s",
+            "SELECT platform_orderbook_snapshot_id FROM orders WHERE id = %s",
             (order_pk,),
         )
         row = cur.fetchone()
     assert row is not None, "Order row must exist after create_order"
-    assert row["orderbook_snapshot_id"] == snapshot_id, (
-        f"create_order did not persist orderbook_snapshot_id; "
-        f"expected {snapshot_id}, got {row['orderbook_snapshot_id']!r}"
+    assert row["platform_orderbook_snapshot_id"] == snapshot_id, (
+        f"create_order did not persist platform_orderbook_snapshot_id; "
+        f"expected {snapshot_id}, got {row['platform_orderbook_snapshot_id']!r}"
     )
 
 
@@ -293,14 +300,14 @@ def test_create_order_without_orderbook_snapshot_id_persists_null(
 
     with get_cursor() as cur:
         cur.execute(
-            "SELECT orderbook_snapshot_id FROM orders WHERE id = %s",
+            "SELECT platform_orderbook_snapshot_id FROM orders WHERE id = %s",
             (order_pk,),
         )
         row = cur.fetchone()
     assert row is not None
-    assert row["orderbook_snapshot_id"] is None, (
+    assert row["platform_orderbook_snapshot_id"] is None, (
         f"create_order without orderbook_snapshot_id must persist NULL; "
-        f"got {row['orderbook_snapshot_id']!r}"
+        f"got {row['platform_orderbook_snapshot_id']!r}"
     )
 
 
@@ -329,14 +336,14 @@ def test_create_edge_with_orderbook_snapshot_id_persists_fk(
 
     with get_cursor() as cur:
         cur.execute(
-            "SELECT orderbook_snapshot_id FROM edges WHERE id = %s",
+            "SELECT platform_orderbook_snapshot_id FROM edges WHERE id = %s",
             (edge_pk,),
         )
         row = cur.fetchone()
     assert row is not None, "Edge row must exist after create_edge"
-    assert row["orderbook_snapshot_id"] == snapshot_id, (
-        f"create_edge did not persist orderbook_snapshot_id; "
-        f"expected {snapshot_id}, got {row['orderbook_snapshot_id']!r}"
+    assert row["platform_orderbook_snapshot_id"] == snapshot_id, (
+        f"create_edge did not persist platform_orderbook_snapshot_id; "
+        f"expected {snapshot_id}, got {row['platform_orderbook_snapshot_id']!r}"
     )
 
 
@@ -359,14 +366,14 @@ def test_create_edge_without_orderbook_snapshot_id_persists_null(
 
     with get_cursor() as cur:
         cur.execute(
-            "SELECT orderbook_snapshot_id FROM edges WHERE id = %s",
+            "SELECT platform_orderbook_snapshot_id FROM edges WHERE id = %s",
             (edge_pk,),
         )
         row = cur.fetchone()
     assert row is not None
-    assert row["orderbook_snapshot_id"] is None, (
+    assert row["platform_orderbook_snapshot_id"] is None, (
         f"create_edge without orderbook_snapshot_id must persist NULL; "
-        f"got {row['orderbook_snapshot_id']!r}"
+        f"got {row['platform_orderbook_snapshot_id']!r}"
     )
 
 
@@ -404,7 +411,7 @@ def test_delete_orderbook_snapshot_blocked_when_order_references_it(
     with pytest.raises((psycopg2.errors.ForeignKeyViolation, psycopg2.errors.RestrictViolation)):
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM orderbook_snapshots WHERE id = %s",
+                "DELETE FROM platform_orderbook_snapshots WHERE id = %s",
                 (snapshot_id,),
             )
 
@@ -413,7 +420,7 @@ def test_delete_orderbook_snapshot_blocked_when_order_references_it(
     # still exist -- the whole point of RESTRICT over CASCADE is that
     # provenance rows are preserved, not silently destroyed.
     result = fetch_one(
-        "SELECT COUNT(*) AS c FROM orderbook_snapshots WHERE id = %s",
+        "SELECT COUNT(*) AS c FROM platform_orderbook_snapshots WHERE id = %s",
         (snapshot_id,),
     )
     assert result is not None
@@ -441,14 +448,14 @@ def test_delete_orderbook_snapshot_blocked_when_edge_references_it(
     with pytest.raises((psycopg2.errors.ForeignKeyViolation, psycopg2.errors.RestrictViolation)):
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM orderbook_snapshots WHERE id = %s",
+                "DELETE FROM platform_orderbook_snapshots WHERE id = %s",
                 (snapshot_id,),
             )
 
     # Assert the parent row actually survived the blocked DELETE (see
     # the orders sibling above for rationale).
     result = fetch_one(
-        "SELECT COUNT(*) AS c FROM orderbook_snapshots WHERE id = %s",
+        "SELECT COUNT(*) AS c FROM platform_orderbook_snapshots WHERE id = %s",
         (snapshot_id,),
     )
     assert result is not None

@@ -201,8 +201,8 @@ def create_market(
         # Migration 0062: market_key added (two-step: TEMP → MKT-{id})
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id,
                 ticker, title, market_type, status, settlement_value,
                 subtitle, open_time, close_time, expiration_time,
                 outcome_label, subcategory, bracket_count, source_url,
@@ -242,7 +242,7 @@ def create_market(
         # Must happen before transaction commit so the TEMP value is never
         # observable externally.
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_pk}", market_pk),
         )
 
@@ -251,8 +251,8 @@ def create_market(
         # Migration 0046: volume_24h, previous_*, yes_bid_size, yes_ask_size
         cur.execute(
             """
-            INSERT INTO market_snapshots (
-                market_id, yes_ask_price, no_ask_price,
+            INSERT INTO platform_market_snapshots (
+                platform_market_id, yes_ask_price, no_ask_price,
                 yes_bid_price, no_bid_price, last_price,
                 spread, volume, open_interest, liquidity,
                 volume_24h, previous_yes_bid, previous_yes_ask,
@@ -315,7 +315,7 @@ def get_current_market(ticker: str) -> dict[str, Any] | None:
         SELECT
             m.id,
             m.platform_id,
-            m.event_id,
+            m.platform_event_id AS event_id,
             m.external_id,
             m.ticker,
             m.title,
@@ -353,9 +353,9 @@ def get_current_market(ticker: str) -> dict[str, Any] | None:
             ms.row_start_ts,
             ms.row_end_ts,
             ms.row_current_ind
-        FROM markets m
-        LEFT JOIN market_snapshots ms
-            ON ms.market_id = m.id
+        FROM platform_markets m
+        LEFT JOIN platform_market_snapshots ms
+            ON ms.platform_market_id = m.id
             AND ms.row_current_ind = TRUE
         WHERE m.ticker = %s
     """
@@ -380,7 +380,7 @@ def count_open_markets() -> int:
     """
     query = """
         SELECT COUNT(*) AS count
-        FROM markets
+        FROM platform_markets
         WHERE status = 'open'
     """
     result = fetch_one(query)
@@ -412,8 +412,8 @@ def count_open_markets_by_subcategory(subcategory: str) -> int:
     """
     query = """
         SELECT COUNT(*) AS count
-        FROM markets m
-        LEFT JOIN events e ON e.id = m.event_id
+        FROM platform_markets m
+        LEFT JOIN platform_events e ON e.id = m.platform_event_id
         WHERE m.status = 'open'
           AND LOWER(COALESCE(m.subcategory, e.subcategory)) = LOWER(%s)
     """
@@ -463,7 +463,7 @@ def update_market_with_versioning(
     dimension table directly.
 
     Steps:
-    1. UPDATE markets dimension row (status, metadata, enrichment columns)
+    1. UPDATE platform_markets dimension row (status, metadata, enrichment columns)
     2. If price changed: mark current snapshot as historical, insert new snapshot
 
     Args:
@@ -639,8 +639,8 @@ def update_market_with_versioning(
             # sibling caller's committed row is visible and gets locked.
             cur.execute(
                 """
-                SELECT id FROM market_snapshots
-                WHERE market_id = %s
+                SELECT id FROM platform_market_snapshots
+                WHERE platform_market_id = %s
                   AND row_current_ind = TRUE
                 FOR UPDATE
                 """,
@@ -653,7 +653,7 @@ def update_market_with_versioning(
             # Migration 0046: expiration_value, notional_value added.
             cur.execute(
                 """
-                UPDATE markets
+                UPDATE platform_markets
                 SET status = %s,
                     metadata = %s,
                     subtitle = %s,
@@ -694,10 +694,10 @@ def update_market_with_versioning(
             # so the close/insert pair share one temporal boundary.
             cur.execute(
                 """
-                UPDATE market_snapshots
+                UPDATE platform_market_snapshots
                 SET row_current_ind = FALSE,
                     row_end_ts = %s
-                WHERE market_id = %s
+                WHERE platform_market_id = %s
                   AND row_current_ind = TRUE
                 """,
                 (now, market_pk),
@@ -708,8 +708,8 @@ def update_market_with_versioning(
             # Migration 0046: volume_24h, previous_*, yes_bid_size, yes_ask_size
             cur.execute(
                 """
-                INSERT INTO market_snapshots (
-                    market_id, yes_ask_price, no_ask_price,
+                INSERT INTO platform_market_snapshots (
+                    platform_market_id, yes_ask_price, no_ask_price,
                     yes_bid_price, no_bid_price, last_price,
                     spread, volume, open_interest, liquidity,
                     volume_24h, previous_yes_bid, previous_yes_ask,
@@ -774,8 +774,8 @@ def get_market_history(ticker: str, limit: int = 100) -> list[dict[str, Any]]:
     """
     query = """
         SELECT ms.*
-        FROM market_snapshots ms
-        JOIN markets m ON ms.market_id = m.id
+        FROM platform_market_snapshots ms
+        JOIN platform_markets m ON ms.platform_market_id = m.id
         WHERE m.ticker = %s
         ORDER BY ms.created_at DESC
         LIMIT %s
@@ -830,11 +830,11 @@ def get_markets_summary(
             m.status,
             m.close_time,
             COALESCE(ms.volume, 0) as volume
-        FROM markets m
-        LEFT JOIN market_snapshots ms
-            ON ms.market_id = m.id AND ms.row_current_ind = TRUE
-        LEFT JOIN events e
-            ON e.id = m.event_id
+        FROM platform_markets m
+        LEFT JOIN platform_market_snapshots ms
+            ON ms.platform_market_id = m.id AND ms.row_current_ind = TRUE
+        LEFT JOIN platform_events e
+            ON e.id = m.platform_event_id
         WHERE 1=1
     """
     params: list[Any] = []
@@ -924,8 +924,8 @@ def insert_orderbook_snapshot(
         - Issue #443: Orderbook depth storage
     """
     query = """
-        INSERT INTO orderbook_snapshots (
-            market_id, best_bid, best_ask, spread,
+        INSERT INTO platform_orderbook_snapshots (
+            platform_market_id, best_bid, best_ask, spread,
             bid_depth_total, ask_depth_total, depth_imbalance, weighted_mid,
             bid_prices, bid_quantities, ask_prices, ask_quantities, levels,
             snapshot_time
@@ -975,8 +975,8 @@ def get_latest_orderbook(market_id: int) -> dict[str, Any] | None:
         - Migration 0034: orderbook_snapshots table
     """
     query = """
-        SELECT * FROM orderbook_snapshots
-        WHERE market_id = %s
+        SELECT * FROM platform_orderbook_snapshots
+        WHERE platform_market_id = %s
         ORDER BY snapshot_time DESC
         LIMIT 1
     """
@@ -1006,8 +1006,8 @@ def get_orderbook_history(
         - Migration 0034: orderbook_snapshots table
     """
     query = """
-        SELECT * FROM orderbook_snapshots
-        WHERE market_id = %s
+        SELECT * FROM platform_orderbook_snapshots
+        WHERE platform_market_id = %s
         ORDER BY snapshot_time DESC
         LIMIT %s
     """

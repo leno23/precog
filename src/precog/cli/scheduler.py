@@ -170,7 +170,7 @@ def _create_priority_calculator() -> Any:
     """
     try:
         from precog.config.config_loader import ConfigLoader
-        from precog.database.crud_markets import count_open_markets_by_subcategory
+        from precog.database.crud_platform_markets import count_open_markets_by_subcategory
         from precog.schedulers.league_priority import LeaguePriorityCalculator
 
         config = ConfigLoader()

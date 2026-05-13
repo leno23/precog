@@ -429,8 +429,8 @@ def create_settlement(
         raise ValueError(f"Payout must be Decimal, got {type(payout).__name__}")
 
     query = """
-        INSERT INTO settlements (
-            market_id, platform_id, outcome, payout, created_at
+        INSERT INTO platform_settlements (
+            platform_market_id, platform_id, outcome, payout, created_at
         )
         VALUES (%s, %s, %s, %s, NOW())
         RETURNING id

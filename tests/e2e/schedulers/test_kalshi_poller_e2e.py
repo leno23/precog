@@ -119,14 +119,14 @@ def clean_test_markets():
 
     with get_cursor(commit=True) as cur:
         delete_market_with_children(cur, "platform_id = %s", ("kalshi",))
-        cur.execute("DELETE FROM events WHERE platform_id = 'kalshi'")
+        cur.execute("DELETE FROM platform_events WHERE platform_id = 'kalshi'")
 
     yield
 
     # Cleanup after test
     with get_cursor(commit=True) as cur:
         delete_market_with_children(cur, "platform_id = %s", ("kalshi",))
-        cur.execute("DELETE FROM events WHERE platform_id = 'kalshi'")
+        cur.execute("DELETE FROM platform_events WHERE platform_id = 'kalshi'")
 
 
 class TestKalshiPollerDatabaseIntegration:
@@ -143,9 +143,10 @@ class TestKalshiPollerDatabaseIntegration:
         The bug: create_market() was called without first creating the event.
 
         Educational Note:
-            The markets table has: event_id REFERENCES events(id)
+            Post-Migration-0090: the platform_markets table has:
+            platform_event_id REFERENCES platform_events(id).
             Without the event existing first, INSERT fails with:
-            "violates foreign key constraint on event_id"
+            "violates foreign key constraint on platform_event_id"
         """
         from precog.schedulers.kalshi_poller import KalshiMarketPoller
 
@@ -165,11 +166,15 @@ class TestKalshiPollerDatabaseIntegration:
             # If markets were created, events should exist too
             if result["items_created"] > 0:
                 with get_cursor() as cur:
-                    cur.execute("SELECT COUNT(*) as cnt FROM events WHERE platform_id = 'kalshi'")
+                    cur.execute(
+                        "SELECT COUNT(*) as cnt FROM platform_events WHERE platform_id = 'kalshi'"
+                    )
                     event_count = cur.fetchone()["cnt"]
                     assert event_count > 0, "Events should be created before markets"
 
-                    cur.execute("SELECT COUNT(*) as cnt FROM markets WHERE platform_id = 'kalshi'")
+                    cur.execute(
+                        "SELECT COUNT(*) as cnt FROM platform_markets WHERE platform_id = 'kalshi'"
+                    )
                     market_count = cur.fetchone()["cnt"]
                     assert market_count > 0, "Markets should be created"
         finally:
@@ -208,7 +213,7 @@ class TestKalshiPollerDatabaseIntegration:
                 with get_cursor() as cur:
                     cur.execute("""
                         SELECT DISTINCT status
-                        FROM markets
+                        FROM platform_markets
                         WHERE platform_id = 'kalshi'
                     """)
                     statuses = [row["status"] for row in cur.fetchall()]
@@ -292,10 +297,13 @@ class TestKalshiPollerDatabaseIntegration:
 
             if result["items_created"] > 0:
                 with get_cursor() as cur:
-                    # Migration 0021: pricing in market_snapshots, use view
+                    # Migration 0021: pricing in platform_market_snapshots, use view.
+                    # Migration 0090: current_markets view recreated with explicit
+                    # column list selecting platform_event_id (renamed from event_id).
                     cur.execute("""
                         SELECT ticker, title, market_type, status,
-                               yes_ask_price, no_ask_price, platform_id, event_id
+                               yes_ask_price, no_ask_price, platform_id,
+                               platform_event_id
                         FROM current_markets
                         WHERE platform_id = 'kalshi'
                         LIMIT 5
@@ -309,7 +317,7 @@ class TestKalshiPollerDatabaseIntegration:
                         assert market["market_type"] == "binary", "market_type should be 'binary'"
                         assert market["status"] in {"open", "closed", "settled", "halted"}
                         assert market["platform_id"] == "kalshi"
-                        assert market["event_id"], "event_id should not be empty"
+                        assert market["platform_event_id"], "platform_event_id should not be empty"
         finally:
             poller.kalshi_client.close()
 
@@ -422,11 +430,12 @@ class TestKalshiPollerIdempotency:
             # First poll (return value unused - we're testing DB side effects)
             poller.poll_once()
 
-            # Migration 0021: markets is dimension (1 row per market, no SCD)
+            # Migration 0021: markets is dimension (1 row per market, no SCD).
+            # Migration 0090: markets renamed to platform_markets.
             with get_cursor() as cur:
                 cur.execute("""
                     SELECT COUNT(*) as cnt
-                    FROM markets
+                    FROM platform_markets
                     WHERE platform_id = 'kalshi'
                 """)
                 count_after_first = cur.fetchone()["cnt"]
@@ -437,7 +446,7 @@ class TestKalshiPollerIdempotency:
             with get_cursor() as cur:
                 cur.execute("""
                     SELECT COUNT(*) as cnt
-                    FROM markets
+                    FROM platform_markets
                     WHERE platform_id = 'kalshi'
                 """)
                 count_after_second = cur.fetchone()["cnt"]
@@ -483,8 +492,8 @@ class TestKalshiPollerIdempotency:
             with get_cursor() as cur:
                 cur.execute("""
                     SELECT m.ticker, COUNT(*) as current_count
-                    FROM market_snapshots ms
-                    JOIN markets m ON ms.market_id = m.id
+                    FROM platform_market_snapshots ms
+                    JOIN platform_markets m ON ms.platform_market_id = m.id
                     WHERE m.platform_id = 'kalshi' AND ms.row_current_ind = TRUE
                     GROUP BY m.ticker
                     HAVING COUNT(*) > 1

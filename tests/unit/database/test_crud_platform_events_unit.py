@@ -1,4 +1,4 @@
-"""Unit tests for crud_events module — extracted from test_crud_operations_unit.py (split per #893 Option 1).
+"""Unit tests for crud_platform_events module — extracted from test_crud_operations_unit.py (split per #893 Option 1).
 
 Covers:
 - update_event_game_id (linking events to games)
@@ -14,15 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from precog.database.crud_events import (
-    _fill_event_null_fields,
-    get_or_create_event,
-)
 from precog.database.crud_game_states import (
     build_event_result,
     check_event_fully_settled,
     update_event,
     update_event_game_id,
+)
+from precog.database.crud_platform_events import (
+    _fill_event_null_fields,
+    get_or_create_event,
 )
 
 
@@ -278,7 +278,7 @@ class TestFillEventNullFields:
         - get_or_create_event(): sole caller
     """
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_fills_null_start_time(self, mock_get_cursor):
         """When existing start_time is NULL, caller value is written."""
         mock_cursor = MagicMock()
@@ -303,7 +303,7 @@ class TestFillEventNullFields:
         # end_time and status should NOT be in the update
         assert "end_time" not in sql.split("WHERE")[0]
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_fills_multiple_null_fields(self, mock_get_cursor):
         """Multiple NULL fields are all filled in a single UPDATE."""
         mock_cursor = MagicMock()
@@ -328,7 +328,7 @@ class TestFillEventNullFields:
         assert "game_id" in sql
         assert "updated_at = NOW()" in sql
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_does_not_overwrite_non_null_values(self, mock_get_cursor):
         """Non-NULL existing values are never overwritten."""
         mock_cursor = MagicMock()
@@ -354,7 +354,7 @@ class TestFillEventNullFields:
         # No UPDATE should be issued because all fields are non-NULL
         mock_cursor.execute.assert_not_called()
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_no_update_when_no_values_provided(self, mock_get_cursor):
         """No UPDATE when caller provides no enrichment values."""
         mock_cursor = MagicMock()
@@ -368,7 +368,7 @@ class TestFillEventNullFields:
         # No caller values -> no UPDATE
         mock_cursor.execute.assert_not_called()
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_partial_fill_only_null_columns(self, mock_get_cursor):
         """Only NULL columns get updated; populated columns are skipped."""
         mock_cursor = MagicMock()
@@ -405,7 +405,7 @@ class TestFillEventNullFields:
         assert "2025-01-01T22:00:00Z" in params
         assert 15 in params
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_empty_string_start_time_is_written(self, mock_get_cursor):
         """start_time='' is falsy in Python but ``is not None`` — should still be written.
 
@@ -433,7 +433,7 @@ class TestFillEventNullFields:
         # Empty-string params included
         assert params.count("") == 3
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_none_string_fields_are_skipped(self, mock_get_cursor):
         """None caller values for start_time/end_time/status should still be skipped.
 
@@ -452,7 +452,7 @@ class TestFillEventNullFields:
 
         mock_cursor.execute.assert_not_called()
 
-    @patch("precog.database.crud_events.get_cursor")
+    @patch("precog.database.crud_platform_events.get_cursor")
     def test_game_id_zero_is_treated_as_value(self, mock_get_cursor):
         """game_id=0 is falsy in Python but should still be written if existing is NULL.
 
@@ -489,8 +489,8 @@ class TestGetOrCreateEventUpsert:
         - Issue #513: 98.7% of events had NULL start_time/end_time
     """
 
-    @patch("precog.database.crud_events._fill_event_null_fields")
-    @patch("precog.database.crud_events.get_event")
+    @patch("precog.database.crud_platform_events._fill_event_null_fields")
+    @patch("precog.database.crud_platform_events.get_event")
     def test_existing_event_triggers_fill(self, mock_get_event, mock_fill):
         """Existing event triggers _fill_event_null_fields with caller args."""
         mock_get_event.return_value = {
@@ -523,13 +523,13 @@ class TestGetOrCreateEventUpsert:
             15,
         )
 
-    @patch("precog.database.crud_events._fill_event_null_fields")
-    @patch("precog.database.crud_events.get_event")
+    @patch("precog.database.crud_platform_events._fill_event_null_fields")
+    @patch("precog.database.crud_platform_events.get_event")
     def test_new_event_does_not_trigger_fill(self, mock_get_event, mock_fill):
         """New event (not existing) goes through create path, not fill."""
         mock_get_event.return_value = None
 
-        with patch("precog.database.crud_events.create_event", return_value=99):
+        with patch("precog.database.crud_platform_events.create_event", return_value=99):
             pk, created = get_or_create_event(
                 event_id="NEW-EVT-1",
                 platform_id="kalshi",

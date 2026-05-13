@@ -59,7 +59,7 @@ def get_series(series_id: str) -> dict[str, Any] | None:
         - ["Hockey"] -> NHL
 
         Using PostgreSQL arrays with GIN index enables efficient queries:
-        SELECT * FROM series WHERE 'Football' = ANY(tags)
+        SELECT * FROM platform_series WHERE 'Football' = ANY(tags)
 
     Reference:
         - docs/database/DATABASE_SCHEMA_SUMMARY.md
@@ -69,7 +69,7 @@ def get_series(series_id: str) -> dict[str, Any] | None:
     query = """
         SELECT id, series_key, platform_id, external_id, category, subcategory,
                title, frequency, tags, metadata, created_at, updated_at
-        FROM series
+        FROM platform_series
         WHERE series_key = %s
     """
     with get_cursor() as cur:
@@ -157,7 +157,7 @@ def list_series(
     query = f"""
         SELECT id, series_key, platform_id, external_id, category, subcategory,
                title, frequency, tags, metadata, created_at, updated_at
-        FROM series
+        FROM platform_series
         {where_clause}
         ORDER BY id
         LIMIT %s OFFSET %s
@@ -229,7 +229,7 @@ def create_series(
 
         Tags stored as TEXT[] (PostgreSQL array) enable efficient filtering
         with the ANY() operator and GIN indexes:
-        SELECT * FROM series WHERE 'Football' = ANY(tags)
+        SELECT * FROM platform_series WHERE 'Football' = ANY(tags)
 
     Reference:
         - docs/database/DATABASE_SCHEMA_SUMMARY.md
@@ -237,7 +237,7 @@ def create_series(
         - Migration 0019: Added surrogate PK (id SERIAL), series_id renamed to series_key
     """
     query = """
-        INSERT INTO series (
+        INSERT INTO platform_series (
             series_key, platform_id, external_id, category, subcategory,
             title, frequency, tags, metadata, created_at, updated_at
         )
@@ -346,7 +346,7 @@ def update_series(
 
     # S608 false positive: set_clauses are hardcoded column names, not user input
     query = f"""
-        UPDATE series
+        UPDATE platform_series
         SET {", ".join(set_clauses)}
         WHERE series_key = %s
     """  # noqa: S608
@@ -488,7 +488,7 @@ def get_event(event_id: str) -> dict[str, Any] | None:
     """
     query = """
         SELECT *
-        FROM events
+        FROM platform_events
         WHERE external_id = %s
     """
     return fetch_one(query, (event_id,))
@@ -588,8 +588,8 @@ def create_event(
 
     # Migration 0062: event_key added to INSERT (two-step: TEMP → EVT-{id}).
     query = """
-        INSERT INTO events (
-            platform_id, series_id, external_id,
+        INSERT INTO platform_events (
+            platform_id, platform_series_id, external_id,
             category, subcategory, title, description,
             start_time, end_time, status, metadata,
             game_id, event_key,
@@ -622,7 +622,7 @@ def create_event(
 
         # Step 1b: Replace TEMP event_key with canonical ``EVT-{id}``.
         cur.execute(
-            "UPDATE events SET event_key = %s WHERE id = %s",
+            "UPDATE platform_events SET event_key = %s WHERE id = %s",
             (f"EVT-{event_pk}", event_pk),
         )
 
@@ -683,7 +683,7 @@ def _fill_event_null_fields(
         return  # Nothing to fill — hot path exits here
 
     set_parts.append("updated_at = NOW()")
-    query = f"UPDATE events SET {', '.join(set_parts)} WHERE id = %s"  # noqa: S608
+    query = f"UPDATE platform_events SET {', '.join(set_parts)} WHERE id = %s"  # noqa: S608
     params.append(existing["id"])
 
     with get_cursor(commit=True) as cur:

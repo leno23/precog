@@ -711,8 +711,8 @@ def upsert_market_trade(
         raise ValueError(f"taker_side must be one of {_VALID_TAKER_SIDES}, got '{taker_side}'")
 
     insert_query = """
-        INSERT INTO market_trades (
-            platform_id, external_trade_id, market_id,
+        INSERT INTO platform_market_trades (
+            platform_id, external_trade_id, platform_market_id,
             count, yes_price, no_price, taker_side,
             trade_time
         )
@@ -822,8 +822,8 @@ def upsert_market_trades_batch(trades: list[dict]) -> int:
         )
 
     insert_query = """
-        INSERT INTO market_trades (
-            platform_id, external_trade_id, market_id,
+        INSERT INTO platform_market_trades (
+            platform_id, external_trade_id, platform_market_id,
             count, yes_price, no_price, taker_side,
             trade_time
         )
@@ -877,7 +877,7 @@ def get_market_trades(
         - Migration 0028: market_trades
         - Issue #402: Add market_trades table for public trade tape
     """
-    query = "SELECT * FROM market_trades WHERE market_id = %s"
+    query = "SELECT * FROM platform_market_trades WHERE platform_market_id = %s"
     params: list = [market_id]
 
     if since is not None:
@@ -916,8 +916,8 @@ def get_latest_trade_time(market_id: int) -> datetime | None:
         - Issue #402: Add market_trades table for public trade tape
     """
     query = """
-        SELECT trade_time FROM market_trades
-        WHERE market_id = %s
+        SELECT trade_time FROM platform_market_trades
+        WHERE platform_market_id = %s
         ORDER BY trade_time DESC, id DESC
         LIMIT 1
     """

@@ -104,7 +104,7 @@ def trailing_stop_open_position(db_pool: Any) -> Any:
     # semantics.
     from decimal import Decimal as _Decimal
 
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     market_pk = create_market(
         platform_id="kalshi",
@@ -127,7 +127,7 @@ def trailing_stop_open_position(db_pool: Any) -> Any:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, market_id, side, quantity,
+                position_key, platform_market_id, side, quantity,
                 entry_price, current_price, stop_loss_price,
                 status, entry_time, last_check_time,
                 row_current_ind, row_start_ts,

@@ -1,4 +1,4 @@
-"""Unit tests for crud_markets module — extracted from test_crud_operations_unit.py (split per #893 Option 1).
+"""Unit tests for crud_platform_markets module — extracted from test_crud_operations_unit.py (split per #893 Option 1).
 
 Covers settlement_value flow and Migration 0046 enrichment fields on the
 create_market / update_market_with_versioning surface.
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from precog.database.crud_markets import (
+from precog.database.crud_platform_markets import (
     create_market,
     update_market_with_versioning,
 )
@@ -20,18 +20,18 @@ from precog.database.crud_markets import (
 class TestUpdateMarketSettlementValue:
     """Test settlement_value flows through update_market_with_versioning."""
 
-    @patch("precog.database.crud_markets.get_cursor")
-    @patch("precog.database.crud_markets.get_current_market")
+    @patch("precog.database.crud_platform_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_current_market")
     def test_settlement_value_included_in_dimension_update(self, mock_get_current, mock_get_cursor):
         """settlement_value is written to the markets dimension UPDATE.
 
         Issue #625: update_market_with_versioning now wraps its mutation
         body in retry_on_scd_unique_conflict. The closure executes:
             [0] SELECT NOW() AS ts
-            [1] SELECT id ... FOR UPDATE (market_snapshots lock)
-            [2] UPDATE markets SET ...          <- dimension UPDATE
-            [3] UPDATE market_snapshots ... (close)
-            [4] INSERT INTO market_snapshots ...
+            [1] SELECT id ... FOR UPDATE (platform_market_snapshots lock)
+            [2] UPDATE platform_markets SET ...   <- dimension UPDATE
+            [3] UPDATE platform_market_snapshots ... (close)
+            [4] INSERT INTO platform_market_snapshots ...
         So the dimension UPDATE is now at call_args_list[2].
         """
         from datetime import datetime as _dt
@@ -84,8 +84,8 @@ class TestUpdateMarketSettlementValue:
         # settlement_value is the 11th param (after source_url, before market_pk)
         assert Decimal("1.0000") in params
 
-    @patch("precog.database.crud_markets.get_cursor")
-    @patch("precog.database.crud_markets.get_current_market")
+    @patch("precog.database.crud_platform_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_current_market")
     def test_settlement_value_none_preserves_existing(self, mock_get_current, mock_get_cursor):
         """When settlement_value is None, the existing value is preserved.
 
@@ -162,7 +162,7 @@ class TestCreateMarketEnrichment:
         - Issue #513: Kalshi API enrichment (P1)
     """
 
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_create_market_with_all_enrichment_fields(self, mock_get_cursor):
         """All 8 new enrichment fields are passed to SQL INSERT statements.
 
@@ -229,7 +229,7 @@ class TestCreateMarketEnrichment:
         assert 45 in snap_params  # yes_bid_size
         assert 30 in snap_params  # yes_ask_size
 
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_create_market_enrichment_fields_nullable(self, mock_get_cursor):
         """Enrichment fields default to None when not provided.
 
@@ -278,7 +278,7 @@ class TestCreateMarketEnrichment:
         assert snap_params[14] is None  # yes_bid_size
         assert snap_params[15] is None  # yes_ask_size
 
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_create_market_decimal_validation_on_enrichment(self, mock_get_cursor):
         """Decimal enrichment fields are validated by validate_decimal().
 
@@ -326,21 +326,21 @@ class TestUpdateMarketEnrichment:
         - Issue #513: Kalshi API enrichment (P1)
     """
 
-    @patch("precog.database.crud_markets.get_current_market")
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_current_market")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_update_market_with_enrichment_fields(self, mock_get_cursor, mock_get_current):
         """All 8 enrichment fields are passed through on update path.
 
-        Dimension fields go to UPDATE markets SET ..., and snapshot fields
-        go to INSERT INTO market_snapshots (...).
+        Dimension fields go to UPDATE platform_markets SET ..., and snapshot
+        fields go to INSERT INTO platform_market_snapshots (...).
 
         Issue #625: update_market_with_versioning now wraps its mutation
         body in retry_on_scd_unique_conflict. Execute call sequence is:
             [0] SELECT NOW() AS ts
-            [1] SELECT id ... FOR UPDATE (market_snapshots lock)
-            [2] UPDATE markets SET ...          <- dimension UPDATE
-            [3] UPDATE market_snapshots ... (close)
-            [4] INSERT INTO market_snapshots ...
+            [1] SELECT id ... FOR UPDATE (platform_market_snapshots lock)
+            [2] UPDATE platform_markets SET ...   <- dimension UPDATE
+            [3] UPDATE platform_market_snapshots ... (close)
+            [4] INSERT INTO platform_market_snapshots ...
         """
         from datetime import datetime as _dt
 
@@ -430,8 +430,8 @@ class TestUpdateMarketEnrichment:
         assert 60 in snap_params  # yes_bid_size
         assert 40 in snap_params  # yes_ask_size
 
-    @patch("precog.database.crud_markets.get_current_market")
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_current_market")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_update_market_enrichment_falls_back_to_current(
         self, mock_get_cursor, mock_get_current
     ):
@@ -509,8 +509,8 @@ class TestUpdateMarketEnrichment:
         assert 30 in snap_params  # yes_bid_size preserved
         assert 25 in snap_params  # yes_ask_size preserved
 
-    @patch("precog.database.crud_markets.get_current_market")
-    @patch("precog.database.crud_markets.get_cursor")
+    @patch("precog.database.crud_platform_markets.get_current_market")
+    @patch("precog.database.crud_platform_markets.get_cursor")
     def test_update_market_integer_fields_pass_through(self, mock_get_cursor, mock_get_current):
         """Integer enrichment fields (volume_24h, yes_bid_size, yes_ask_size)
         are passed through without Decimal validation.

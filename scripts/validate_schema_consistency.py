@@ -301,10 +301,10 @@ def validate_type_precision() -> tuple[bool, list[str]]:
     # Format: 'table_name': ['col1', 'col2', ...],
     # ========================================================================
     price_columns = {
-        # markets dimension (migration 0021: prices moved to market_snapshots)
-        "markets": ["settlement_value"],
-        # market_snapshots fact (migration 0021: SCD Type 2 versioned pricing)
-        "market_snapshots": [
+        # platform_markets dimension (migration 0021: prices moved to platform_market_snapshots; migration 0090: renamed)
+        "platform_markets": ["settlement_value"],
+        # platform_market_snapshots fact (migration 0021: SCD Type 2 versioned pricing; migration 0090: renamed)
+        "platform_market_snapshots": [
             "yes_ask_price",
             "no_ask_price",
             "yes_bid_price",
@@ -411,7 +411,7 @@ def validate_scd_type2_compliance() -> tuple[bool, list[str]]:
 
     Example:
         versioned_tables = [
-            'markets',
+            'platform_market_snapshots',
             'positions',
             'portfolio_snapshots',  # Phase 5 - new versioned table
         ]
@@ -428,7 +428,7 @@ def validate_scd_type2_compliance() -> tuple[bool, list[str]]:
     # UPDATE THIS when adding tables using SCD Type 2 versioning pattern
     # ========================================================================
     versioned_tables = [
-        "market_snapshots",  # Migration 0021: SCD Type 2 pricing (replaces markets)
+        "platform_market_snapshots",  # Migration 0021: SCD Type 2 pricing (replaces platform_markets); migration 0090: renamed
         "positions",
         "game_states",
         "edges",

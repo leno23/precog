@@ -112,8 +112,8 @@ def position_with_edge(db_pool: Any) -> Any:
         # creation) and inline the TEMP→MKT-{id} two-step.
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -132,19 +132,20 @@ def position_with_edge(db_pool: Any) -> Any:
         )
         market_pk = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_pk}", market_pk),
         )
 
         # Seed a minimal edge row. All non-NULL columns on edges are either
-        # business-identity (edge_key), FK (market_id), or metric fields
-        # (expected_value, probabilities, price). Uses a small deterministic
-        # set of values so the test's provenance assertions are stable.
-        # ``row_current_ind`` is explicitly TRUE so partial indexes accept it.
+        # business-identity (edge_key), FK (platform_market_id), or metric
+        # fields (expected_value, probabilities, price). Uses a small
+        # deterministic set of values so the test's provenance assertions are
+        # stable. ``row_current_ind`` is explicitly TRUE so partial indexes
+        # accept it.
         cur.execute(
             """
             INSERT INTO edges (
-                edge_key, market_id, model_id,
+                edge_key, platform_market_id, model_id,
                 expected_value, true_win_probability,
                 market_implied_probability, market_price,
                 execution_environment, edge_status,

@@ -40,7 +40,12 @@ TRIGGER_MAP = {
     "strategies": "trg_strategies_immutability",
     "probability_models": "trg_models_immutability",
     "trades": "trg_trades_append_only",
-    "settlements": "trg_settlements_append_only",
+    # Post-Migration-0090: settlements table renamed to platform_settlements.
+    # The trigger NAME does not change in Migration 0090 (no DROP TRIGGER/CREATE);
+    # but ALTER TABLE ... RENAME TO carries the trigger forward attached to the
+    # post-rename table.  The map key (table name) is what matters here for
+    # information_schema lookups in the tests below.
+    "platform_settlements": "trg_settlements_append_only",
     "account_ledger": "trg_account_ledger_append_only",
     "position_exits": "trg_position_exits_append_only",
     "exit_attempts": "trg_exit_attempts_append_only",
@@ -48,7 +53,7 @@ TRIGGER_MAP = {
 
 APPEND_ONLY_TABLES = (
     "trades",
-    "settlements",
+    "platform_settlements",
     "account_ledger",
     "position_exits",
     "exit_attempts",
@@ -122,7 +127,7 @@ def trigger_test_scaffold(db_pool: Any) -> Any:
         # test — inline the TEMP→MKT-{id} two-step.
         cur.execute(
             """
-            INSERT INTO markets (
+            INSERT INTO platform_markets (
                 platform_id, external_id, ticker, title, market_type, status,
                 market_key
             )
@@ -134,7 +139,7 @@ def trigger_test_scaffold(db_pool: Any) -> Any:
         )
         market_id = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_id}", market_id),
         )
 
@@ -142,7 +147,7 @@ def trigger_test_scaffold(db_pool: Any) -> Any:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, platform_id, market_id, side, quantity,
+                position_key, platform_id, platform_market_id, side, quantity,
                 entry_price, current_price, status, entry_time, last_check_time,
                 row_current_ind, row_start_ts, execution_environment
             )
@@ -196,7 +201,7 @@ def _cleanup(cur: Any, platform_id: str) -> None:
         (platform_id,),
     )
     cur.execute(
-        "DELETE FROM settlements WHERE platform_id = %s",
+        "DELETE FROM platform_settlements WHERE platform_id = %s",
         (platform_id,),
     )
     cur.execute(
@@ -204,7 +209,7 @@ def _cleanup(cur: Any, platform_id: str) -> None:
         (platform_id,),
     )
     cur.execute(
-        "DELETE FROM markets WHERE platform_id = %s",
+        "DELETE FROM platform_markets WHERE platform_id = %s",
         (platform_id,),
     )
     cur.execute(
@@ -523,7 +528,7 @@ def _insert_append_only_row(
         cur.execute(
             """
             INSERT INTO trades (
-                platform_id, market_id, side, price,
+                platform_id, platform_market_id, side, price,
                 quantity, execution_environment
             )
             VALUES (%s, %s, 'buy', %s, 1, 'live')
@@ -533,11 +538,11 @@ def _insert_append_only_row(
         )
         return cur.fetchone()["id"]
 
-    if table == "settlements":
+    if table == "platform_settlements":
         cur.execute(
             """
-            INSERT INTO settlements (
-                platform_id, market_id, outcome, payout,
+            INSERT INTO platform_settlements (
+                platform_id, platform_market_id, outcome, payout,
                 execution_environment
             )
             VALUES (%s, %s, 'yes', %s, 'live')
@@ -593,7 +598,7 @@ def _insert_append_only_row(
 # PK column name per table (for the UPDATE WHERE clause).
 _PK_COLUMN = {
     "trades": "id",
-    "settlements": "id",
+    "platform_settlements": "id",
     "account_ledger": "id",
     "position_exits": "exit_id",
     "exit_attempts": "attempt_id",
@@ -602,7 +607,7 @@ _PK_COLUMN = {
 # A harmless column to attempt UPDATE on (exists on all 5 tables).
 _UPDATE_COLUMN = {
     "trades": "price",
-    "settlements": "payout",
+    "platform_settlements": "payout",
     "account_ledger": "amount",
     "position_exits": "exit_reason",
     "exit_attempts": "exit_reason",
@@ -610,7 +615,7 @@ _UPDATE_COLUMN = {
 
 _UPDATE_VALUE = {
     "trades": Decimal("0.9999"),
-    "settlements": Decimal("0.0001"),
+    "platform_settlements": Decimal("0.0001"),
     "account_ledger": Decimal("999.0000"),
     "position_exits": "tampered",
     "exit_attempts": "tampered",

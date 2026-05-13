@@ -763,7 +763,7 @@ def test_canonical_match_overrides_platform_market_id_cascade_on_delete(
 ) -> None:
     """**LOAD-BEARING** per build spec § 6.
 
-    DELETE markets row → override row gone (CASCADE).  Pre-condition
+    DELETE platform_markets row → override row gone (CASCADE).  Pre-condition
     assertion proves the override existed before DELETE.
     """
     suffix = uuid.uuid4().hex[:8]
@@ -811,7 +811,10 @@ def test_canonical_match_overrides_platform_market_id_cascade_on_delete(
 
         # DELETE the platform market — CASCADE must fire.
         with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM markets WHERE id = %s", (seeded_platform_market_id,))
+            cur.execute(
+                "DELETE FROM platform_markets WHERE id = %s",
+                (seeded_platform_market_id,),
+            )
 
         with get_cursor() as cur:
             cur.execute(

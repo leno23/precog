@@ -44,7 +44,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from psycopg2 import IntegrityError
 
-from precog.database.crud_markets import (
+from precog.database.crud_platform_markets import (
     create_market,
     get_current_market,
     update_market_with_versioning,
@@ -97,7 +97,7 @@ def setup_kalshi_platform(db_pool, clean_test_data):
     with get_cursor(commit=True) as cur:
         # SETUP CLEANUP: Delete markets from previous test runs FIRST
         # This prevents UniqueViolation from Hypothesis replaying saved examples
-        cur.execute("DELETE FROM markets WHERE platform_id = 'kalshi'")
+        cur.execute("DELETE FROM platform_markets WHERE platform_id = 'kalshi'")
 
         # Create platform (idempotent - safe to call multiple times)
         cur.execute(
@@ -111,13 +111,13 @@ def setup_kalshi_platform(db_pool, clean_test_data):
         # Create series for test markets (idempotent)
         cur.execute(
             """
-            INSERT INTO series (series_key, platform_id, external_id, title, category)
+            INSERT INTO platform_series (series_key, platform_id, external_id, title, category)
             VALUES ('KXNFLGAME', 'kalshi', 'KXNFLGAME-EXT', 'NFL Game Series', 'sports')
             ON CONFLICT (series_key) WHERE row_current_ind = TRUE DO NOTHING
         """
         )
         # Get the series surrogate PK for event FK
-        cur.execute("SELECT id FROM series WHERE series_key = 'KXNFLGAME'")
+        cur.execute("SELECT id FROM platform_series WHERE series_key = 'KXNFLGAME'")
         series_row = cur.fetchone()
         series_pk = series_row["id"] if series_row else None
 
@@ -138,8 +138,8 @@ def setup_kalshi_platform(db_pool, clean_test_data):
         ]:
             cur.execute(
                 """
-                INSERT INTO events (
-                    platform_id, series_id, external_id, category, title, status,
+                INSERT INTO platform_events (
+                    platform_id, platform_series_id, external_id, category, title, status,
                     event_key
                 )
                 VALUES ('kalshi', %s, %s, 'sports', %s, 'scheduled', %s)
@@ -151,7 +151,7 @@ def setup_kalshi_platform(db_pool, clean_test_data):
             _evt_row = cur.fetchone()
             if _evt_row is not None:
                 cur.execute(
-                    "UPDATE events SET event_key = %s WHERE id = %s",
+                    "UPDATE platform_events SET event_key = %s WHERE id = %s",
                     (f"EVT-{_evt_row['id']}", _evt_row["id"]),
                 )
 
@@ -167,7 +167,7 @@ def _get_test_event_pk() -> int:
     """Look up the integer surrogate PK for the test event KXNFLGAME-25DEC15CLEKC."""
     global _cached_event_pk
     if _cached_event_pk is None:
-        from precog.database.crud_events import get_event
+        from precog.database.crud_platform_events import get_event
 
         evt = get_event("KXNFLGAME-25DEC15CLEKC")
         _cached_event_pk = evt["id"] if evt else 1
@@ -366,8 +366,8 @@ def test_scd_type2_at_most_one_current_row(db_pool, clean_test_data, setup_kalsh
         cur.execute(
             """
             SELECT COUNT(*)
-            FROM market_snapshots
-            WHERE market_id = %s AND row_current_ind = TRUE
+            FROM platform_market_snapshots
+            WHERE platform_market_id = %s AND row_current_ind = TRUE
         """,
             (market_pk,),
         )
@@ -388,8 +388,8 @@ def test_scd_type2_at_most_one_current_row(db_pool, clean_test_data, setup_kalsh
         cur.execute(
             """
             SELECT COUNT(*)
-            FROM market_snapshots
-            WHERE market_id = %s AND row_current_ind = TRUE
+            FROM platform_market_snapshots
+            WHERE platform_market_id = %s AND row_current_ind = TRUE
         """,
             (market_pk,),
         )
@@ -433,15 +433,15 @@ def test_scd_type2_update_creates_new_row(
 
     Educational Note:
         Traditional database (loses history):
-        UPDATE markets SET yes_price = 0.6500 WHERE ticker = 'NFL-KC-YES'
-        ❌ Old price (0.6200) is GONE FOREVER
+        UPDATE platform_markets SET yes_price = 0.6500 WHERE ticker = 'NFL-KC-YES'
+        Old price (0.6200) is GONE FOREVER
 
         SCD Type-2 (preserves history):
         -- Step 1: Mark current row as historical
-        UPDATE markets SET row_current_ind = FALSE WHERE ticker = 'NFL-KC-YES' AND row_current_ind = TRUE
+        UPDATE platform_markets SET row_current_ind = FALSE WHERE ticker = 'NFL-KC-YES' AND row_current_ind = TRUE
         -- Step 2: Insert new version
-        INSERT INTO markets (..., yes_price = 0.6500, row_current_ind = TRUE)
-        ✅ Both prices preserved!
+        INSERT INTO platform_markets (..., yes_price = 0.6500, row_current_ind = TRUE)
+        Both prices preserved.
 
     Example:
         >>> market = create_market(ticker="NFL-KC-YES", price=0.6200)
@@ -513,8 +513,8 @@ def test_scd_type2_update_creates_new_row(
         cur.execute(
             """
             SELECT yes_ask_price, row_current_ind
-            FROM market_snapshots
-            WHERE market_id = %s AND row_current_ind = FALSE
+            FROM platform_market_snapshots
+            WHERE platform_market_id = %s AND row_current_ind = FALSE
             ORDER BY created_at DESC
             LIMIT 1
         """,
@@ -866,7 +866,7 @@ def test_transaction_rollback_on_constraint_violation(
 
         PostgreSQL uses transactions to enforce atomicity:
         BEGIN;
-            INSERT INTO markets (...);  -- Step 1
+            INSERT INTO platform_markets (...);  -- Step 1
             UPDATE account_balance (...);  -- Step 2 (fails)
         ROLLBACK;  -- Both steps undone!
 
@@ -900,7 +900,7 @@ def test_transaction_rollback_on_constraint_violation(
 
     # Count markets before failed operation
     with get_cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM markets WHERE ticker = %s", (ticker,))
+        cur.execute("SELECT COUNT(*) FROM platform_markets WHERE ticker = %s", (ticker,))
         result = cur.fetchone()
         count_before = result["count"] if result else 0
 
@@ -920,7 +920,7 @@ def test_transaction_rollback_on_constraint_violation(
 
     # Verify rollback: count should be unchanged
     with get_cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM markets WHERE ticker = %s", (ticker,))
+        cur.execute("SELECT COUNT(*) FROM platform_markets WHERE ticker = %s", (ticker,))
         result = cur.fetchone()
         count_after = result["count"] if result else 0
 
@@ -1050,12 +1050,13 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
 
         DELETE FROM platforms WHERE platform_id = 'kalshi'
         ERROR: update or delete on table "platforms" violates foreign key constraint
-               "markets_platform_id_fkey" on table "markets"
-        DETAIL: Key (platform_id)=(kalshi) is still referenced from table "markets"
+               "platform_markets_platform_id_fkey" on table "platform_markets"
+        DETAIL: Key (platform_id)=(kalshi) is still referenced from table
+               "platform_markets"
 
         Correct sequence now:
-        DELETE FROM markets WHERE platform_id = 'test-platform';   -- children first
-        DELETE FROM platforms WHERE platform_id = 'test-platform'; -- then parent
+        DELETE FROM platform_markets WHERE platform_id = 'test-platform'; -- children first
+        DELETE FROM platforms WHERE platform_id = 'test-platform';        -- then parent
     """
     import uuid
 
@@ -1087,7 +1088,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
         # Create test series
         cur.execute(
             """
-            INSERT INTO series (series_key, platform_id, external_id, title, category)
+            INSERT INTO platform_series (series_key, platform_id, external_id, title, category)
             VALUES (%s, %s, %s, 'Test Series', 'sports')
             RETURNING id
         """,
@@ -1095,7 +1096,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
         )
         series_pk = cur.fetchone()["id"]
 
-        # Create test event (uses series_id integer FK to series.id).
+        # Create test event (uses platform_series_id integer FK to platform_series.id).
         # Migration 0047: event_id column dropped, external_id is canonical.
         # Migration 0062 (#791): events.event_key is NOT NULL + UNIQUE.
         # Raw-SQL property-test setup — inline TEMP→EVT-{id}.
@@ -1103,8 +1104,8 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
 
         cur.execute(
             """
-            INSERT INTO events (
-                platform_id, series_id, external_id, category, title, status,
+            INSERT INTO platform_events (
+                platform_id, platform_series_id, external_id, category, title, status,
                 event_key
             )
             VALUES (%s, %s, %s, 'sports', 'Test Event', 'scheduled', %s)
@@ -1119,7 +1120,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
         )
         event_pk = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE events SET event_key = %s WHERE id = %s",
+            "UPDATE platform_events SET event_key = %s WHERE id = %s",
             (f"EVT-{event_pk}", event_pk),
         )
 
@@ -1141,7 +1142,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
     # Verify market exists
     with get_cursor() as cur:
         cur.execute(
-            "SELECT COUNT(*) FROM markets WHERE platform_id = %s",
+            "SELECT COUNT(*) FROM platform_markets WHERE platform_id = %s",
             (test_platform_id,),
         )
         result = cur.fetchone()
@@ -1166,7 +1167,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
         )
         platform_count = (cur.fetchone() or {}).get("count", 0)
         cur.execute(
-            "SELECT COUNT(*) FROM markets WHERE platform_id = %s",
+            "SELECT COUNT(*) FROM platform_markets WHERE platform_id = %s",
             (test_platform_id,),
         )
         market_count = (cur.fetchone() or {}).get("count", 0)
@@ -1191,7 +1192,7 @@ def test_restrict_prevents_platform_delete_with_markets(db_pool, clean_test_data
         )
         platform_count_after = (cur.fetchone() or {}).get("count", 0)
         cur.execute(
-            "SELECT COUNT(*) FROM markets WHERE platform_id = %s",
+            "SELECT COUNT(*) FROM platform_markets WHERE platform_id = %s",
             (test_platform_id,),
         )
         market_count_after = (cur.fetchone() or {}).get("count", 0)

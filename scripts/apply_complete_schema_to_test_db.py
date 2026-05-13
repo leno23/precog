@@ -126,9 +126,9 @@ for table in tables:
 # Check for critical tables
 critical_tables = [
     "platforms",
-    "series",
-    "events",
-    "markets",
+    "platform_series",
+    "platform_events",
+    "platform_markets",
     "strategies",
     "probability_models",
     "positions",

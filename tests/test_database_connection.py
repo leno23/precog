@@ -106,7 +106,7 @@ def test_execute_query(db_pool, clean_test_data):
 
     temp_key = f"TEMP-{_uuid.uuid4()}"
     rowcount = execute_query(
-        """INSERT INTO markets (
+        """INSERT INTO platform_markets (
             platform_id, external_id,
             ticker, title, market_type, status,
             market_key
@@ -126,7 +126,11 @@ def test_execute_query(db_pool, clean_test_data):
     assert rowcount == 1
 
     # Clean up
-    execute_query("DELETE FROM markets WHERE ticker = %s", ("TEST-EXECUTE-QUERY",), commit=True)
+    execute_query(
+        "DELETE FROM platform_markets WHERE ticker = %s",
+        ("TEST-EXECUTE-QUERY",),
+        commit=True,
+    )
 
 
 @pytest.mark.integration
@@ -184,7 +188,7 @@ def test_transaction_rollback_on_error(db_pool, db_cursor):
 def test_parameterized_query_prevents_injection(db_pool):
     """Test that parameterized queries prevent SQL injection."""
     # Attempt SQL injection
-    malicious_input = "'; DROP TABLE markets; --"
+    malicious_input = "'; DROP TABLE platform_markets; --"
 
     # This should NOT execute the DROP TABLE command
     result = fetch_one("SELECT %s as value", (malicious_input,))
@@ -193,11 +197,11 @@ def test_parameterized_query_prevents_injection(db_pool):
     assert result is not None  # Guard for type checker
     assert result["value"] == malicious_input
 
-    # Verify markets table still exists
+    # Verify platform_markets table still exists
     tables = fetch_all("""
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'markets'
+        AND table_name = 'platform_markets'
     """)
     assert len(tables) == 1  # Table still exists!

@@ -43,13 +43,13 @@ import psycopg2
 import pytest
 
 from precog.database.connection import get_cursor
-from precog.database.crud_events import create_event
 from precog.database.crud_game_states import (
     create_game_state,
     get_or_create_game,
     upsert_game_state,
 )
-from precog.database.crud_markets import create_market
+from precog.database.crud_platform_events import create_event
+from precog.database.crud_platform_markets import create_market
 
 pytestmark = [pytest.mark.integration]
 
@@ -60,8 +60,12 @@ pytestmark = [pytest.mark.integration]
 
 # (table, key_column, prefix, is_scd2)
 _KEY_SPEC: list[tuple[str, str, str, bool]] = [
-    ("markets", "market_key", "MKT", False),
-    ("events", "event_key", "EVT", False),
+    # Post-Migration-0090: markets -> platform_markets, events -> platform_events.
+    # Migration 0062's idx_{table}_{key_col} indexes were renamed by 0090's
+    # idx_* rename map; the new index names are idx_platform_markets_market_key
+    # and idx_platform_events_event_key.
+    ("platform_markets", "market_key", "MKT", False),
+    ("platform_events", "event_key", "EVT", False),
     ("game_states", "game_state_key", "GST", True),
     ("games", "game_key", "GAM", False),
 ]
@@ -100,7 +104,7 @@ def test_business_key_column_exists_and_not_null(
 
 
 def test_non_scd2_tables_have_full_unique_index(db_pool: Any) -> None:
-    """markets/events/games have a plain (non-partial) UNIQUE on <x>_key."""
+    """platform_markets/platform_events/games have a plain (non-partial) UNIQUE on <x>_key."""
     for table, key_col, _prefix, is_scd2 in _KEY_SPEC:
         if is_scd2:
             continue
@@ -221,7 +225,7 @@ def test_create_market_assigns_canonical_market_key(db_pool: Any) -> None:
     )
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT market_key FROM markets WHERE id = %s", (market_pk,))
+            cur.execute("SELECT market_key FROM platform_markets WHERE id = %s", (market_pk,))
             row = cur.fetchone()
         assert row is not None
         assert row["market_key"] == f"MKT-{market_pk}"
@@ -247,7 +251,7 @@ def test_create_event_assigns_canonical_event_key(db_pool: Any) -> None:
     )
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT event_key FROM events WHERE id = %s", (event_pk,))
+            cur.execute("SELECT event_key FROM platform_events WHERE id = %s", (event_pk,))
             row = cur.fetchone()
         assert row is not None
         assert row["event_key"] == f"EVT-{event_pk}"
@@ -625,7 +629,7 @@ def test_markets_market_key_full_unique_enforced(db_pool: Any) -> None:
         with pytest.raises(psycopg2.errors.UniqueViolation):
             with get_cursor(commit=True) as cur:
                 cur.execute(
-                    "UPDATE markets SET market_key = %s WHERE id = %s",
+                    "UPDATE platform_markets SET market_key = %s WHERE id = %s",
                     (f"MKT-{pk1}", pk2),
                 )
     finally:

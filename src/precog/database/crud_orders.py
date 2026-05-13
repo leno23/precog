@@ -194,14 +194,14 @@ def create_order(
     insert_query = """
         INSERT INTO orders (
             platform_id, external_order_id, client_order_id,
-            market_id,
+            platform_market_id,
             strategy_id, model_id, edge_id, position_id,
             side, action, order_type, time_in_force,
             requested_price, requested_quantity,
             remaining_quantity, status,
             execution_environment, trade_source,
             order_metadata,
-            orderbook_snapshot_id
+            platform_orderbook_snapshot_id
         )
         VALUES (
             %s, %s, %s,
@@ -541,7 +541,7 @@ def get_open_orders(
         params.append(execution_environment)
 
     if market_id is not None:
-        query += " AND market_id = %s"
+        query += " AND platform_market_id = %s"
         params.append(market_id)
 
     query += " ORDER BY created_at DESC LIMIT %s"

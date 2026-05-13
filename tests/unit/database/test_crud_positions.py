@@ -129,7 +129,7 @@ def _current_position_row(**overrides) -> dict:
     base = {
         "id": 1,
         "position_key": "POS-1",
-        "market_id": 42,
+        "platform_market_id": 42,
         "strategy_id": 1,
         "model_id": 2,
         "side": "YES",

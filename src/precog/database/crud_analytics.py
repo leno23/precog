@@ -190,7 +190,7 @@ def create_edge(
     # mocks remain stable.
     insert_query = """
         INSERT INTO edges (
-            edge_key, market_id, model_id,
+            edge_key, platform_market_id, model_id,
             expected_value, true_win_probability,
             market_implied_probability, market_price,
             yes_ask_price, no_ask_price, spread,
@@ -199,7 +199,7 @@ def create_edge(
             recommended_action, category, subcategory,
             execution_environment, edge_status,
             row_current_ind, row_start_ts,
-            orderbook_snapshot_id
+            platform_orderbook_snapshot_id
         )
         VALUES (
             'TEMP', %s, %s,
@@ -399,7 +399,7 @@ def get_edges_by_strategy(
         - Migration 0023: strategy_id column + idx_edges_strategy index
     """
     query = """
-        SELECT id, edge_key, market_id, model_id, strategy_id,
+        SELECT id, edge_key, platform_market_id, model_id, strategy_id,
                expected_value, true_win_probability, market_implied_probability,
                market_price, yes_ask_price, no_ask_price, spread,
                volume, open_interest, last_price, liquidity,
@@ -457,7 +457,7 @@ def get_edge_lifecycle(
         - Migration 0023: edge_lifecycle view definition
     """
     query = """
-        SELECT id, edge_key, market_id, model_id, strategy_id,
+        SELECT id, edge_key, platform_market_id, model_id, strategy_id,
                expected_value, true_win_probability, market_implied_probability,
                market_price, yes_ask_price, no_ask_price,
                edge_status, actual_outcome, settlement_value,
@@ -470,7 +470,7 @@ def get_edge_lifecycle(
     params: list = []
 
     if market_id is not None:
-        query += " AND market_id = %s"
+        query += " AND platform_market_id = %s"
         params.append(market_id)
 
     if strategy_id is not None:
@@ -882,7 +882,7 @@ def create_prediction(
     insert_query = """
         INSERT INTO predictions (
             evaluation_run_id, model_id,
-            market_id, event_id,
+            platform_market_id, platform_event_id,
             predicted_probability, confidence,
             market_price_at_prediction, edge
         )

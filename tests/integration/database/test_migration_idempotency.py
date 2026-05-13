@@ -54,12 +54,12 @@ class TestMigrationIdempotency:
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_schema = 'public'
-                AND table_name = 'markets'
+                AND table_name = 'platform_markets'
             ) as exists
             """
         )
         assert result is not None
-        # markets table should exist
+        # platform_markets table should exist
         assert result["exists"] is True
 
     def test_column_exists_check_is_idempotent(self, db_pool, db_cursor, clean_test_data):
@@ -69,13 +69,13 @@ class TestMigrationIdempotency:
             SELECT EXISTS (
                 SELECT FROM information_schema.columns
                 WHERE table_schema = 'public'
-                AND table_name = 'markets'
+                AND table_name = 'platform_markets'
                 AND column_name = 'ticker'
             ) as exists
             """
         )
         assert result is not None
-        # ticker column should exist in markets table
+        # ticker column should exist in platform_markets table
         assert result["exists"] is True
 
     def test_create_table_if_not_exists_pattern(self, db_pool, db_cursor, clean_test_data):
@@ -190,7 +190,7 @@ class TestMigrationUtilsIntegration:
         )
 
         # Known existing table
-        assert table_exists("markets") is True
+        assert table_exists("platform_markets") is True
         # Non-existent table
         assert table_exists("nonexistent_table_xyz") is False
 
@@ -201,9 +201,9 @@ class TestMigrationUtilsIntegration:
         )
 
         # Known existing column
-        assert column_exists("markets", "ticker") is True
+        assert column_exists("platform_markets", "ticker") is True
         # Non-existent column
-        assert column_exists("markets", "nonexistent_column_xyz") is False
+        assert column_exists("platform_markets", "nonexistent_column_xyz") is False
 
     def test_index_exists_function(self, db_pool, db_cursor, clean_test_data):
         """Test index_exists utility function."""
@@ -273,8 +273,8 @@ class TestSchemaValidation:
     def test_core_tables_exist(self, db_pool, db_cursor, clean_test_data):
         """Verify all core tables from migrations exist."""
         core_tables = [
-            "markets",
-            "market_snapshots",
+            "platform_markets",
+            "platform_market_snapshots",
             "positions",
             "trades",
             "strategies",
@@ -303,8 +303,9 @@ class TestSchemaValidation:
         Note: The actual schema uses row_current_ind and row_end_ts.
         row_start_ts and row_version are not implemented in current schema.
         """
-        # Migration 0021: SCD Type 2 moved from markets to market_snapshots
-        versioned_tables = ["market_snapshots", "positions", "game_states", "edges"]
+        # Migration 0021: SCD Type 2 moved from markets to market_snapshots (renamed to
+        # platform_market_snapshots in Migration 0090).
+        versioned_tables = ["platform_market_snapshots", "positions", "game_states", "edges"]
         # Only check columns that exist in the actual schema
         scd_columns = ["row_current_ind", "row_end_ts"]
 
@@ -333,8 +334,8 @@ class TestSchemaValidation:
         renamed yes_price → yes_ask_price, no_price → no_ask_price.
         """
         price_columns = [
-            ("market_snapshots", "yes_ask_price"),
-            ("market_snapshots", "no_ask_price"),
+            ("platform_market_snapshots", "yes_ask_price"),
+            ("platform_market_snapshots", "no_ask_price"),
             ("positions", "entry_price"),
         ]
 

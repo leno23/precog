@@ -60,15 +60,18 @@ TOMBSTONE_VALUES = ("live", "paper", "backtest", "unknown")
 
 # 3-value tables: historical rows are definitionally live (settlements come
 # exclusively from Kalshi's live settlement feed in the current codebase).
-NON_TOMBSTONE_TABLES = ("settlements",)
+NON_TOMBSTONE_TABLES = ("platform_settlements",)
 NON_TOMBSTONE_VALUES = ("live", "paper", "backtest")
 
 ALL_TARGET_TABLES = TOMBSTONE_TABLES + NON_TOMBSTONE_TABLES
 
 # Constraint name map (for CHECK-definition assertions).
+# Migration 0090 does NOT rename CHECK constraints — only FK constraints and
+# select unique constraints are renamed in 0090 step 7.  chk_settlements_exec_env
+# carries forward to platform_settlements with its original name.
 CONSTRAINT_NAMES = {
     "account_ledger": "chk_account_ledger_exec_env",
-    "settlements": "chk_settlements_exec_env",
+    "platform_settlements": "chk_settlements_exec_env",
     "position_exits": "chk_position_exits_exec_env",
     "exit_attempts": "chk_exit_attempts_exec_env",
 }
@@ -112,12 +115,12 @@ def migration_test_platform(db_pool: Any) -> Any:
             (platform_id,),
         )
 
-        # Market (FK target for settlements via market_id).  Migration 0062
-        # (#791): markets.market_key is NOT NULL + UNIQUE.  Raw-SQL migration
+        # Market (FK target for settlements via platform_market_id).  Migration
+        # 0062 (#791): markets.market_key is NOT NULL + UNIQUE.  Raw-SQL migration
         # test — inline the TEMP→MKT-{id} two-step.
         cur.execute(
             """
-            INSERT INTO markets (
+            INSERT INTO platform_markets (
                 platform_id, external_id, ticker, title, market_type, status,
                 market_key
             )
@@ -129,7 +132,7 @@ def migration_test_platform(db_pool: Any) -> Any:
         )
         market_id = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_id}", market_id),
         )
 
@@ -139,7 +142,7 @@ def migration_test_platform(db_pool: Any) -> Any:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, platform_id, market_id, side, quantity,
+                position_key, platform_id, platform_market_id, side, quantity,
                 entry_price, current_price, status, entry_time, last_check_time,
                 row_current_ind, row_start_ts, execution_environment
             )
@@ -213,12 +216,12 @@ def _insert_row(
                 """,
                 (platform_id, execution_environment),
             )
-    elif table == "settlements":
+    elif table == "platform_settlements":
         if execution_environment is None:
             cur.execute(
                 """
-                INSERT INTO settlements (
-                    platform_id, market_id, outcome, payout
+                INSERT INTO platform_settlements (
+                    platform_id, platform_market_id, outcome, payout
                 )
                 VALUES (%s, %s, 'yes', 10.0000)
                 """,
@@ -227,8 +230,8 @@ def _insert_row(
         else:
             cur.execute(
                 """
-                INSERT INTO settlements (
-                    platform_id, market_id, outcome, payout,
+                INSERT INTO platform_settlements (
+                    platform_id, platform_market_id, outcome, payout,
                     execution_environment
                 )
                 VALUES (%s, %s, 'yes', 10.0000, %s)
@@ -420,7 +423,7 @@ class TestInsertValidValues:
             with get_cursor(commit=True) as cur:
                 _insert_row(
                     cur,
-                    "settlements",
+                    "platform_settlements",
                     env,
                     platform_id=platform_id,
                     market_id=market_id,
@@ -429,7 +432,8 @@ class TestInsertValidValues:
 
         with get_cursor(commit=False) as cur:
             cur.execute(
-                "SELECT execution_environment FROM settlements WHERE platform_id = %s ORDER BY id",
+                "SELECT execution_environment FROM platform_settlements "
+                "WHERE platform_id = %s ORDER BY id",
                 (platform_id,),
             )
             envs = [r["execution_environment"] for r in cur.fetchall()]

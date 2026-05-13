@@ -18,7 +18,7 @@ from decimal import Decimal
 
 import pytest
 
-from precog.database.crud_markets import get_market_history
+from precog.database.crud_platform_markets import get_market_history
 from precog.database.crud_strategies import (
     create_strategy,
     get_strategy,
@@ -144,12 +144,12 @@ def test_get_market_history_rejects_sql_injection_in_ticker(
     Educational Note:
         This tests the most common injection vector: WHERE clauses.
 
-        ❌ VULNERABLE:
-            query = f"SELECT * FROM markets WHERE ticker = '{malicious_input}'"
+        VULNERABLE:
+            query = f"SELECT * FROM platform_markets WHERE ticker = '{malicious_input}'"
             # Attacker controls WHERE condition, can add OR '1'='1' to bypass filter
 
-        ✅ SAFE:
-            query = "SELECT * FROM markets WHERE ticker = %s"
+        SAFE:
+            query = "SELECT * FROM platform_markets WHERE ticker = %s"
             params = (malicious_input,)
             # WHERE condition remains intact, malicious input treated as literal string
 
@@ -162,7 +162,7 @@ def test_get_market_history_rejects_sql_injection_in_ticker(
         - Query completes without error
         - Returns empty list (no markets match malicious ticker)
         - No SQL syntax errors
-        - markets table still exists
+        - platform_markets table still exists
     """
     # Query with malicious ticker
     history = get_market_history(malicious_input, limit=10)
@@ -171,8 +171,8 @@ def test_get_market_history_rejects_sql_injection_in_ticker(
     assert isinstance(history, list)
     assert len(history) == 0  # No markets with this malicious ticker
 
-    # Verify markets table still exists
-    db_cursor.execute("SELECT COUNT(*) as count FROM markets")
+    # Verify platform_markets table still exists
+    db_cursor.execute("SELECT COUNT(*) as count FROM platform_markets")
     result = db_cursor.fetchone()
     assert result is not None  # Table exists and is queryable
 

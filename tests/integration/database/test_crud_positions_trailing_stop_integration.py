@@ -105,7 +105,7 @@ def trailing_stop_position(db_pool: Any) -> Any:
     # CRUD helper.  Migration 0062 (#791): markets.market_key is NOT NULL +
     # UNIQUE; ``create_market`` handles the ``TEMP → MKT-{id}`` two-step
     # internally.
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     market_pk = create_market(
         platform_id="kalshi",
@@ -125,7 +125,7 @@ def trailing_stop_position(db_pool: Any) -> Any:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, market_id, side, quantity,
+                position_key, platform_market_id, side, quantity,
                 entry_price, current_price, stop_loss_price,
                 status, entry_time, last_check_time,
                 row_current_ind, row_start_ts,
@@ -828,7 +828,7 @@ def create_position_market(db_pool: Any) -> Any:
     # Seed the market (positions FK to markets.id) via the CRUD helper so
     # migration 0062 (#791) ``market_key`` TEMP→MKT-{id} canonicalization
     # runs inside the production code path.
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     market_pk = create_market(
         platform_id="kalshi",
@@ -893,7 +893,7 @@ def _seed_open_position_with_trailing_stop(
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, market_id, side, quantity,
+                position_key, platform_market_id, side, quantity,
                 entry_price, current_price, stop_loss_price,
                 trailing_stop_state,
                 status, entry_time, last_check_time,

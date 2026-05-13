@@ -72,7 +72,7 @@ def race_platform(db_pool: Any) -> Any:
     # Setup: ensure clean state and the platform row exists.
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM settlements WHERE platform_id = %s",
+            "DELETE FROM platform_settlements WHERE platform_id = %s",
             (_TEST_PLATFORM_ID,),
         )
         cur.execute(
@@ -94,7 +94,7 @@ def race_platform(db_pool: Any) -> Any:
     try:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM settlements WHERE platform_id = %s",
+                "DELETE FROM platform_settlements WHERE platform_id = %s",
                 (_TEST_PLATFORM_ID,),
             )
             cur.execute(

@@ -42,10 +42,13 @@ def test_market_pks(db_cursor, clean_test_data):
     # drift from the CRUD-inserted rows that production / other tests
     # observe).
     from precog.database.connection import fetch_one
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     # Look up event surrogate PK (migration 0020: markets use integer FK)
-    _evt_row = fetch_one("SELECT id FROM events WHERE external_id = %s", ("TEST-EVT-NFL-KC-BUF",))
+    _evt_row = fetch_one(
+        "SELECT id FROM platform_events WHERE external_id = %s",
+        ("TEST-EVT-NFL-KC-BUF",),
+    )
     event_pk = _evt_row["id"] if _evt_row else None
 
     # Create test markets (required for get_current_positions() JOIN)
@@ -202,8 +205,12 @@ def test_open_position_success(db_pool, db_cursor, clean_test_data, position_par
     assert isinstance(position["id"], int)
     assert position["position_key"].startswith("POS-")  # Format: POS-{id}
 
-    # Verify position data
-    assert position["market_id"] == position_params["market_id"]
+    # Verify position data.  Post-Migration-0090: positions.market_id renamed
+    # to platform_market_id; the dict returned by `manager.open_position()`
+    # uses the column name (SELECT * FROM positions ...).  Python kwargs to
+    # open_position() keep `market_id` per Phase 4 finding2 (parameter name
+    # preservation).
+    assert position["platform_market_id"] == position_params["market_id"]
     assert position["strategy_id"] == position_params["strategy_id"]
     assert position["model_id"] == position_params["model_id"]
     assert position["side"] == position_params["side"]
@@ -504,7 +511,8 @@ def test_get_open_positions_filter_by_market(
     positions = manager.get_open_positions(market_id=nfl_001_pk)
 
     assert len(positions) == 2
-    assert all(p["market_id"] == nfl_001_pk for p in positions)
+    # Post-Migration-0090: positions.market_id renamed to platform_market_id.
+    assert all(p["platform_market_id"] == nfl_001_pk for p in positions)
 
 
 def test_get_open_positions_filter_by_strategy(db_cursor, clean_test_data, position_params):

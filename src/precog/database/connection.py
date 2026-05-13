@@ -357,7 +357,7 @@ def get_cursor(commit: bool = False):
     Example (Write query with commit):
         >>> with get_cursor(commit=True) as cur:
         >>>     cur.execute(
-        >>>         "INSERT INTO markets (ticker, title) VALUES (%s, %s)",
+        >>>         "INSERT INTO platform_markets (ticker, title) VALUES (%s, %s)",
         >>>         ("NFL-KC-YES", "Kansas City Chiefs")
         >>>     )
         # Transaction committed, connection returned to pool
@@ -417,7 +417,7 @@ def execute_query(query: str, params: tuple | None = None, commit: bool = True) 
 
     Example:
         >>> execute_query(
-        ...     "INSERT INTO markets (ticker, title) VALUES (%s, %s)",
+        ...     "INSERT INTO platform_markets (ticker, title) VALUES (%s, %s)",
         ...     ("NFL-KC-YES", "Kansas City Chiefs"),
         ...     commit=True
         ... )

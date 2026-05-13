@@ -16,7 +16,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from precog.database.connection import get_cursor
-from precog.database.crud_events import (
+from precog.database.crud_platform_events import (
     create_series,
     get_or_create_series,
     get_series,
@@ -77,7 +77,7 @@ def cleanup_test_series():
     """Clean up test series after each test."""
     yield
     with get_cursor() as cur:
-        cur.execute("DELETE FROM series WHERE series_key LIKE 'PROP-TEST-%'")
+        cur.execute("DELETE FROM platform_series WHERE series_key LIKE 'PROP-TEST-%'")
 
 
 # =============================================================================

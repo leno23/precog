@@ -153,7 +153,7 @@ def create_canonical_entity(
             "Conor McGregor").  NOT NULL.
         metadata: Optional JSONB dict.  Serialized via ``json.dumps``
             (mirrors the ``crud_canonical_markets.create_canonical_market``
-            and ``crud_events.create_event`` metadata convention).
+            and ``crud_platform_events.create_event`` metadata convention).
 
     Returns:
         Full row dict of the created canonical entity.  Keys:

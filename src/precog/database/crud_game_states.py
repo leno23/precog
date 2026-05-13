@@ -1217,24 +1217,24 @@ def update_bracket_counts() -> int:
     """
     query = """
         WITH counts AS (
-            SELECT event_id, COUNT(*) AS cnt
-            FROM markets
-            WHERE event_id IS NOT NULL
-            GROUP BY event_id
+            SELECT platform_event_id, COUNT(*) AS cnt
+            FROM platform_markets
+            WHERE platform_event_id IS NOT NULL
+            GROUP BY platform_event_id
         )
-        UPDATE markets m
+        UPDATE platform_markets m
         SET bracket_count = c.cnt,
             updated_at = NOW()
         FROM counts c
-        WHERE m.event_id = c.event_id
+        WHERE m.platform_event_id = c.platform_event_id
           AND (m.bracket_count IS DISTINCT FROM c.cnt)
     """
     # Also null out bracket_count for markets with no event (shouldn't be 0)
     null_query = """
-        UPDATE markets
+        UPDATE platform_markets
         SET bracket_count = NULL,
             updated_at = NOW()
-        WHERE event_id IS NULL
+        WHERE platform_event_id IS NULL
           AND bracket_count IS NOT NULL
     """
     with get_cursor(commit=True) as cur:
@@ -1277,7 +1277,7 @@ def update_event_game_id(event_id: int, game_id: int) -> bool:
         - Issue #462: Event-to-game matching
     """
     query = """
-        UPDATE events
+        UPDATE platform_events
         SET game_id = %s, updated_at = NOW()
         WHERE id = %s AND (game_id IS NULL OR game_id != %s)
     """
@@ -1362,7 +1362,7 @@ def update_event(
     # Always bump updated_at
     set_parts.append("updated_at = NOW()")
 
-    query = f"UPDATE events SET {', '.join(set_parts)} WHERE id = %s"  # noqa: S608
+    query = f"UPDATE platform_events SET {', '.join(set_parts)} WHERE id = %s"  # noqa: S608
     params.append(event_id)
 
     with get_cursor(commit=True) as cur:
@@ -1397,8 +1397,8 @@ def check_event_fully_settled(event_id: int) -> bool:
         SELECT
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE status = 'settled') AS settled
-        FROM markets
-        WHERE event_id = %s
+        FROM platform_markets
+        WHERE platform_event_id = %s
     """
     result = fetch_one(query, (event_id,))
     if result is None:
@@ -1451,8 +1451,8 @@ def build_event_result(event_id: int) -> dict[str, Any]:
     """
     query = """
         SELECT ticker, settlement_value, status
-        FROM markets
-        WHERE event_id = %s
+        FROM platform_markets
+        WHERE platform_event_id = %s
         ORDER BY ticker
     """
     rows = fetch_all(query, (event_id,))
@@ -1497,7 +1497,7 @@ def find_unlinked_sports_events(league: str | None = None) -> list[dict[str, Any
     if league:
         query = """
             SELECT id, external_id, title, subcategory
-            FROM events
+            FROM platform_events
             WHERE game_id IS NULL
               AND category = 'sports'
               AND subcategory = %s
@@ -1507,7 +1507,7 @@ def find_unlinked_sports_events(league: str | None = None) -> list[dict[str, Any
 
     query = """
         SELECT id, external_id, title, subcategory
-        FROM events
+        FROM platform_events
         WHERE game_id IS NULL
           AND category = 'sports'
         ORDER BY id

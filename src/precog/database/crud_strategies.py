@@ -398,7 +398,7 @@ def update_strategy_status(
         - Pattern 2 in CLAUDE.md: SCD Type 2 Versioning
         - ``crud_positions.update_position_price`` (SCD2 supersede precedent,
           FOR UPDATE at crud_positions.py:541)
-        - ``crud_markets.update_market_snapshot`` (SCD2 supersede precedent)
+        - ``crud_platform_markets.update_market_snapshot`` (SCD2 supersede precedent)
         - Glokta + Ripley S62 convergent findings (P0-2 FOR UPDATE,
           P1-1 activated_at/deactivated_at carry-forward)
     """
@@ -488,7 +488,7 @@ def update_strategy_status(
 
             # 1b: server-side NOW() snapshot so row_end_ts on the close and
             # row_start_ts on the new row agree to the microsecond (matches
-            # the crud_positions / crud_markets supersede precedent — avoids
+            # the crud_positions / crud_platform_markets supersede precedent — avoids
             # gap/overlap between the two clocks that any client-side
             # datetime.now() would create).
             cur.execute("SELECT NOW() AS ts")

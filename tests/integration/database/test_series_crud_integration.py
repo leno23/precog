@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from precog.database.crud_events import (
+from precog.database.crud_platform_events import (
     create_series,
     get_or_create_series,
     get_series,
@@ -53,7 +53,7 @@ def cleanup_stale_test_series() -> Generator[None, None, None]:
 
     # Clean up before tests
     with get_cursor() as cur:
-        cur.execute("DELETE FROM series WHERE series_key LIKE 'PROP-TEST-%'")
+        cur.execute("DELETE FROM platform_series WHERE series_key LIKE 'PROP-TEST-%'")
         deleted = cur.rowcount
         if deleted > 0:
             # Note: This is expected during parallel test runs
@@ -63,7 +63,7 @@ def cleanup_stale_test_series() -> Generator[None, None, None]:
 
     # Clean up after tests as well (defensive)
     with get_cursor() as cur:
-        cur.execute("DELETE FROM series WHERE series_key LIKE 'PROP-TEST-%'")
+        cur.execute("DELETE FROM platform_series WHERE series_key LIKE 'PROP-TEST-%'")
 
 
 # =============================================================================
@@ -122,7 +122,7 @@ def created_series(db_pool, db_cursor, clean_test_data, unique_series_id: str) -
     from precog.database.connection import get_cursor
 
     with get_cursor() as cur:
-        cur.execute("DELETE FROM series WHERE series_key = %s", (unique_series_id,))
+        cur.execute("DELETE FROM platform_series WHERE series_key = %s", (unique_series_id,))
 
 
 # =============================================================================
@@ -300,7 +300,7 @@ class TestCreateSeriesIntegration:
         from precog.database.connection import get_cursor
 
         with get_cursor() as cur:
-            cur.execute("DELETE FROM series WHERE series_key = %s", (unique_series_id,))
+            cur.execute("DELETE FROM platform_series WHERE series_key = %s", (unique_series_id,))
 
     def test_create_series_with_all_fields(self, unique_series_id: str) -> None:
         """create_series should store all provided fields."""
@@ -327,7 +327,7 @@ class TestCreateSeriesIntegration:
         from precog.database.connection import get_cursor
 
         with get_cursor() as cur:
-            cur.execute("DELETE FROM series WHERE series_key = %s", (unique_series_id,))
+            cur.execute("DELETE FROM platform_series WHERE series_key = %s", (unique_series_id,))
 
 
 # =============================================================================
@@ -394,7 +394,7 @@ class TestGetOrCreateSeriesIntegration:
         from precog.database.connection import get_cursor
 
         with get_cursor() as cur:
-            cur.execute("DELETE FROM series WHERE series_key = %s", (unique_series_id,))
+            cur.execute("DELETE FROM platform_series WHERE series_key = %s", (unique_series_id,))
 
     def test_get_or_create_returns_existing_series(self, created_series: dict[str, Any]) -> None:
         """get_or_create_series should return existing series PK without creating."""

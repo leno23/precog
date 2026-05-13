@@ -118,7 +118,7 @@ def sample_series(db_pool, clean_test_data, sample_platform) -> str:
     from precog.database.connection import execute_query
 
     query = """
-        INSERT INTO series (series_key, platform_id, external_id, category, subcategory, title, frequency)
+        INSERT INTO platform_series (series_key, platform_id, external_id, category, subcategory, title, frequency)
         VALUES ('NFL-2025', 'kalshi', 'NFL-2025-ext', 'sports', 'nfl', 'NFL 2025 Season', 'recurring')
         ON CONFLICT (series_key) WHERE row_current_ind = TRUE DO NOTHING
         RETURNING series_key
@@ -138,10 +138,10 @@ def sample_event(db_pool, clean_test_data, sample_platform, sample_series) -> st
     test fixture in sync with production semantics (Glokta S60 review).
     """
     from precog.database.connection import fetch_one
-    from precog.database.crud_events import get_or_create_event
+    from precog.database.crud_platform_events import get_or_create_event
 
     # Look up series surrogate PK (migration 0019: events use integer FK)
-    series_row = fetch_one("SELECT id FROM series WHERE series_key = 'NFL-2025'")
+    series_row = fetch_one("SELECT id FROM platform_series WHERE series_key = 'NFL-2025'")
     series_pk = series_row["id"] if series_row else None
 
     get_or_create_event(
@@ -165,15 +165,15 @@ def sample_market(db_pool, clean_test_data, sample_platform, sample_event) -> in
         Integer surrogate PK from markets(id) -- post-migration 0021/0022.
     """
     from precog.database.connection import fetch_one
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
 
     # Look up event surrogate PK (migration 0020: events use integer FK)
-    event_row = fetch_one("SELECT id FROM events WHERE external_id = 'HIGHTEST'")
+    event_row = fetch_one("SELECT id FROM platform_events WHERE external_id = 'HIGHTEST'")
     event_pk = event_row["id"] if event_row else None
 
     # Check if market already exists (by ticker, since market_id VARCHAR is dropped)
     existing = fetch_one(
-        "SELECT id FROM markets WHERE ticker = %s",
+        "SELECT id FROM platform_markets WHERE ticker = %s",
         ("HIGHTEST-25FEB05",),
     )
     if existing:

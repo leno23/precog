@@ -27,8 +27,9 @@ Test groups:
           unfilled).
 
     LOAD-BEARING L9 TEST:
-        - platform_market_id NO FK — DELETE markets.id row referenced in
-          log → log row survives intact (the v2.42 design intent verbatim).
+        - platform_market_id NO FK — DELETE platform_markets.id row
+          referenced in log → log row survives intact (the v2.42 design
+          intent verbatim).
 
 Pattern 73 SSOT discipline test:
     - Imports ``ACTION_VALUES`` from constants.py and asserts each value
@@ -721,7 +722,7 @@ def test_canonical_match_log_canonical_market_id_set_null_on_delete(db_pool: Any
 def test_canonical_match_log_platform_market_id_no_fk(db_pool: Any) -> None:
     """**LOAD-BEARING per L9 + build spec § 2 design notes.**
 
-    DELETE markets row referenced in log → log row survives intact.
+    DELETE platform_markets row referenced in log → log row survives intact.
 
     L9 framing (migration docstring): "the log is the truth of who
     decided what; the platform row is a lookup target that may
@@ -761,7 +762,10 @@ def test_canonical_match_log_platform_market_id_no_fk(db_pool: Any) -> None:
         # AND the log row's platform_market_id stays as the (now-orphan)
         # integer value.  The L9 design intent: log outlives platform row.
         with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM markets WHERE id = %s", (seeded_platform_market_id,))
+            cur.execute(
+                "DELETE FROM platform_markets WHERE id = %s",
+                (seeded_platform_market_id,),
+            )
 
         with get_cursor() as cur:
             cur.execute(

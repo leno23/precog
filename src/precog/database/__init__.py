@@ -6,7 +6,7 @@ CRUD operations live in domain-specific modules (crud_*.py).
 Import directly from the domain module, not from this package.
 
 Example:
-    from precog.database.crud_markets import create_market
+    from precog.database.crud_platform_markets import create_market
     from precog.database.crud_teams import get_team_by_espn_id
     from precog.database.connection import get_cursor
 

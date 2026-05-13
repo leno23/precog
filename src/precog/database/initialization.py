@@ -270,10 +270,10 @@ def validate_critical_tables(required_tables: list[str] | None = None) -> list[s
     if required_tables is None:
         required_tables = [
             "platforms",
-            "series",
-            "events",
-            "markets",
-            "market_snapshots",
+            "platform_series",
+            "platform_events",
+            "platform_markets",
+            "platform_market_snapshots",
             "games",
             "game_states",
             "game_odds",

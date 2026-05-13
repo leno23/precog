@@ -267,9 +267,9 @@ _TIER_1_TABLES = (
     "exit_attempts",
     "position_exits",
     "account_ledger",
-    "settlements",
-    "market_trades",
-    "orderbook_snapshots",
+    "platform_settlements",
+    "platform_market_trades",
+    "platform_orderbook_snapshots",
     "elo_calculation_log",
     "predictions",
     "backtesting_runs",
@@ -285,7 +285,7 @@ _TIER_1_TABLES = (
 _TIER_2_TABLES = (
     "trades",
     "orders",
-    "market_snapshots",
+    "platform_market_snapshots",
 )
 
 _TIER_3_TABLES = (
@@ -344,14 +344,14 @@ def delete_market_with_children(
         delete_market_with_children(cur, "platform_id = %s", ("kalshi",))
     """
     cursor.execute(
-        f"SELECT id FROM markets WHERE {where_clause}",  # noqa: S608
+        f"SELECT id FROM platform_markets WHERE {where_clause}",  # noqa: S608
         params,
     )
     market_ids = [row["id"] for row in cursor.fetchall()]
     if not market_ids:
         return
 
-    _delete_cascade(cursor, "markets", "id", market_ids)
+    _delete_cascade(cursor, "platform_markets", "id", market_ids)
 
 
 def delete_event_with_children(
@@ -361,14 +361,14 @@ def delete_event_with_children(
 ) -> None:
     """Delete event(s) and all children via dynamic FK discovery."""
     cursor.execute(
-        f"SELECT id FROM events WHERE {where_clause}",  # noqa: S608
+        f"SELECT id FROM platform_events WHERE {where_clause}",  # noqa: S608
         params,
     )
     event_ids = [row["id"] for row in cursor.fetchall()]
     if not event_ids:
         return
 
-    _delete_cascade(cursor, "events", "id", event_ids)
+    _delete_cascade(cursor, "platform_events", "id", event_ids)
 
 
 def delete_venue_with_children(

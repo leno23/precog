@@ -15,7 +15,7 @@ Sites covered (one TestCase per site):
       the inline rationale comment in ``upsert_game_odds`` for full
       explanation, and ``memory/feedback_issue_body_identifier_decay.md``
       for the broader lesson.
-    - Issue #625: ``update_market_with_versioning`` in ``crud_markets``
+    - Issue #625: ``update_market_with_versioning`` in ``crud_platform_markets``
       (concurrent-update race on ``idx_market_snapshots_unique_current``).
     - Issue #626: ``update_position_price`` in ``crud_positions``
       (concurrent-update race on ``idx_positions_unique_current``).
@@ -73,7 +73,7 @@ from precog.database.crud_game_states import (
     upsert_game_odds,
     upsert_game_state,
 )
-from precog.database.crud_markets import update_market_with_versioning
+from precog.database.crud_platform_markets import update_market_with_versioning
 from precog.database.crud_positions import (
     close_position,
     set_trailing_stop_state,
@@ -447,12 +447,15 @@ def market_race_setup(db_pool: Any) -> Any:
         # Remove any prior test market + snapshots.
         cur.execute(
             """
-            DELETE FROM market_snapshots
-            WHERE market_id IN (SELECT id FROM markets WHERE ticker = %s)
+            DELETE FROM platform_market_snapshots
+            WHERE platform_market_id IN (SELECT id FROM platform_markets WHERE ticker = %s)
             """,
             (_TEST_MARKET_TICKER,),
         )
-        cur.execute("DELETE FROM markets WHERE ticker = %s", (_TEST_MARKET_TICKER,))
+        cur.execute(
+            "DELETE FROM platform_markets WHERE ticker = %s",
+            (_TEST_MARKET_TICKER,),
+        )
 
         # Insert the dimension row.  Migration 0062 (#791): markets.market_key
         # is NOT NULL + UNIQUE.  Race test — inline TEMP→MKT-{id} (the
@@ -460,8 +463,8 @@ def market_race_setup(db_pool: Any) -> Any:
         # precise raw-SQL control over the market dimension row).
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -480,7 +483,7 @@ def market_race_setup(db_pool: Any) -> Any:
         )
         market_pk = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_pk}", market_pk),
         )
 
@@ -488,8 +491,8 @@ def market_race_setup(db_pool: Any) -> Any:
         # needs an existing current row so both callers pass get_current_market.
         cur.execute(
             """
-            INSERT INTO market_snapshots (
-                market_id, yes_ask_price, no_ask_price,
+            INSERT INTO platform_market_snapshots (
+                platform_market_id, yes_ask_price, no_ask_price,
                 row_current_ind, row_start_ts, updated_at
             )
             VALUES (%s, %s, %s, TRUE, NOW(), NOW())
@@ -501,8 +504,11 @@ def market_race_setup(db_pool: Any) -> Any:
 
     try:
         with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM market_snapshots WHERE market_id = %s", (market_pk,))
-            cur.execute("DELETE FROM markets WHERE id = %s", (market_pk,))
+            cur.execute(
+                "DELETE FROM platform_market_snapshots WHERE platform_market_id = %s",
+                (market_pk,),
+            )
+            cur.execute("DELETE FROM platform_markets WHERE id = %s", (market_pk,))
     except Exception:
         pass
 
@@ -524,13 +530,13 @@ class TestUpdateMarketConcurrentUpdateRace:
                 # Reset state: one current snapshot, no history.
                 with get_cursor(commit=True) as cur:
                     cur.execute(
-                        "DELETE FROM market_snapshots WHERE market_id = %s",
+                        "DELETE FROM platform_market_snapshots WHERE platform_market_id = %s",
                         (market_pk,),
                     )
                     cur.execute(
                         """
-                        INSERT INTO market_snapshots (
-                            market_id, yes_ask_price, no_ask_price,
+                        INSERT INTO platform_market_snapshots (
+                            platform_market_id, yes_ask_price, no_ask_price,
                             row_current_ind, row_start_ts, updated_at
                         )
                         VALUES (%s, %s, %s, TRUE, NOW(), NOW())
@@ -570,8 +576,8 @@ class TestUpdateMarketConcurrentUpdateRace:
                     cur.execute(
                         """
                         SELECT id, row_current_ind
-                        FROM market_snapshots
-                        WHERE market_id = %s
+                        FROM platform_market_snapshots
+                        WHERE platform_market_id = %s
                         """,
                         (market_pk,),
                     )
@@ -613,13 +619,13 @@ def position_race_setup(db_pool: Any) -> Any:
         )
         cur.execute(
             """
-            DELETE FROM market_snapshots WHERE market_id IN (
-                SELECT id FROM markets WHERE ticker = %s
+            DELETE FROM platform_market_snapshots WHERE platform_market_id IN (
+                SELECT id FROM platform_markets WHERE ticker = %s
             )
             """,
             (test_ticker,),
         )
-        cur.execute("DELETE FROM markets WHERE ticker = %s", (test_ticker,))
+        cur.execute("DELETE FROM platform_markets WHERE ticker = %s", (test_ticker,))
 
         # Create the underlying market (positions FK to markets.id).
         # Migration 0062 (#791): markets.market_key is NOT NULL + UNIQUE.
@@ -627,8 +633,8 @@ def position_race_setup(db_pool: Any) -> Any:
         # a positions race, so we keep raw-SQL control over the market seed).
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -647,7 +653,7 @@ def position_race_setup(db_pool: Any) -> Any:
         )
         market_pk = cur.fetchone()["id"]
         cur.execute(
-            "UPDATE markets SET market_key = %s WHERE id = %s",
+            "UPDATE platform_markets SET market_key = %s WHERE id = %s",
             (f"MKT-{market_pk}", market_pk),
         )
 
@@ -660,7 +666,7 @@ def position_race_setup(db_pool: Any) -> Any:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, market_id, side, quantity,
+                position_key, platform_market_id, side, quantity,
                 entry_price, current_price,
                 status, entry_time, last_check_time,
                 row_current_ind, row_start_ts,
@@ -687,8 +693,11 @@ def position_race_setup(db_pool: Any) -> Any:
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("DELETE FROM positions WHERE position_key = %s", (position_bk,))
-            cur.execute("DELETE FROM market_snapshots WHERE market_id = %s", (market_pk,))
-            cur.execute("DELETE FROM markets WHERE id = %s", (market_pk,))
+            cur.execute(
+                "DELETE FROM platform_market_snapshots WHERE platform_market_id = %s",
+                (market_pk,),
+            )
+            cur.execute("DELETE FROM platform_markets WHERE id = %s", (market_pk,))
     except Exception:
         pass
 
@@ -704,7 +713,7 @@ def _reset_position(position_bk: str, market_pk: int) -> int:
         cur.execute(
             """
             INSERT INTO positions (
-                position_key, market_id, side, quantity,
+                position_key, platform_market_id, side, quantity,
                 entry_price, current_price,
                 status, entry_time, last_check_time,
                 row_current_ind, row_start_ts,

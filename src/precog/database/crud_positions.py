@@ -130,8 +130,8 @@ def get_positions_with_pnl(
                 ELSE 0
             END as pnl_percent
         FROM positions p
-        LEFT JOIN markets m ON p.market_id = m.id
-        LEFT JOIN market_snapshots ms ON ms.market_id = m.id AND ms.row_current_ind = TRUE
+        LEFT JOIN platform_markets m ON p.platform_market_id = m.id
+        LEFT JOIN platform_market_snapshots ms ON ms.platform_market_id = m.id AND ms.row_current_ind = TRUE
         WHERE p.row_current_ind = TRUE
     """
     params: list[Any] = []
@@ -280,7 +280,7 @@ def create_position(
     # NULL it on version transitions. Design memo: #725 Holden S57 §6.
     insert_query = """
         INSERT INTO positions (
-            position_key, market_id, strategy_id, model_id, side,
+            position_key, platform_market_id, strategy_id, model_id, side,
             quantity, entry_price,
             target_price, stop_loss_price,
             trailing_stop_state, position_metadata,
@@ -378,8 +378,8 @@ def get_current_positions(
     query = """
         SELECT p.*, m.ticker, ms.yes_ask_price as current_market_price
         FROM positions p
-        JOIN markets m ON p.market_id = m.id
-        LEFT JOIN market_snapshots ms ON ms.market_id = m.id AND ms.row_current_ind = TRUE
+        JOIN platform_markets m ON p.platform_market_id = m.id
+        LEFT JOIN platform_market_snapshots ms ON ms.platform_market_id = m.id AND ms.row_current_ind = TRUE
         WHERE p.row_current_ind = TRUE
     """
     params: list[Any] = []
@@ -389,7 +389,7 @@ def get_current_positions(
         params.append(status)
 
     if market_id:
-        query += " AND p.market_id = %s"
+        query += " AND p.platform_market_id = %s"
         params.append(market_id)
 
     if execution_environment is not None:
@@ -642,7 +642,7 @@ def update_position_price(
             cur.execute(
                 """
                 INSERT INTO positions (
-                    position_key, market_id, strategy_id, model_id, side,
+                    position_key, platform_market_id, strategy_id, model_id, side,
                     quantity, entry_price,
                     current_price, unrealized_pnl,
                     target_price, stop_loss_price,
@@ -664,7 +664,7 @@ def update_position_price(
                 """,
                 (
                     current["position_key"],  # Copy business key from current version
-                    current["market_id"],
+                    current["platform_market_id"],
                     current["strategy_id"],
                     current["model_id"],
                     current["side"],
@@ -881,7 +881,7 @@ def close_position(
             cur.execute(
                 """
                 INSERT INTO positions (
-                    position_key, market_id, strategy_id, model_id, side,
+                    position_key, platform_market_id, strategy_id, model_id, side,
                     quantity, entry_price, exit_price, current_price,
                     realized_pnl,
                     target_price, stop_loss_price,
@@ -903,7 +903,7 @@ def close_position(
                 """,
                 (
                     current["position_key"],  # Copy business key from current version
-                    current["market_id"],
+                    current["platform_market_id"],
                     current["strategy_id"],
                     current["model_id"],
                     current["side"],
@@ -1215,7 +1215,7 @@ def set_trailing_stop_state(
             cur.execute(
                 """
                 INSERT INTO positions (
-                    position_key, market_id, strategy_id, model_id, side,
+                    position_key, platform_market_id, strategy_id, model_id, side,
                     quantity, entry_price,
                     current_price, unrealized_pnl, realized_pnl,
                     target_price, stop_loss_price,
@@ -1244,7 +1244,7 @@ def set_trailing_stop_state(
                 """,
                 (
                     current["position_key"],  # Copy business key from current version
-                    current["market_id"],
+                    current["platform_market_id"],
                     current["strategy_id"],
                     current["model_id"],
                     current["side"],
@@ -1389,7 +1389,7 @@ def create_trade(
 
     query = """
         INSERT INTO trades (
-            market_id, side, quantity, price,
+            platform_market_id, side, quantity, price,
             order_id, is_taker, fees,
             trade_metadata, execution_time,
             calculated_probability, market_price, edge_value,
@@ -1447,8 +1447,8 @@ def get_trades_by_market(
     query = """
         SELECT t.*, m.ticker
         FROM trades t
-        JOIN markets m ON t.market_id = m.id
-        WHERE t.market_id = %s
+        JOIN platform_markets m ON t.platform_market_id = m.id
+        WHERE t.platform_market_id = %s
     """
     params: list[str | int] = [market_id]
 
@@ -1493,7 +1493,7 @@ def get_recent_trades(
                o.strategy_id, o.model_id,
                s.strategy_name, pm.model_name
         FROM trades t
-        JOIN markets m ON t.market_id = m.id
+        JOIN platform_markets m ON t.platform_market_id = m.id
         LEFT JOIN orders o ON t.order_id = o.id
         LEFT JOIN strategies s ON o.strategy_id = s.strategy_id
         LEFT JOIN probability_models pm ON o.model_id = pm.model_id
@@ -1554,7 +1554,7 @@ def get_position_by_id(position_id: int) -> dict[str, Any] | None:
     query = """
         SELECT p.*, m.ticker, s.strategy_name, pm.model_name
         FROM positions p
-        JOIN markets m ON p.market_id = m.id
+        JOIN platform_markets m ON p.platform_market_id = m.id
         JOIN strategies s ON p.strategy_id = s.strategy_id
         LEFT JOIN probability_models pm ON p.model_id = pm.model_id
         WHERE p.id = %s
@@ -1594,7 +1594,7 @@ def get_trade_by_id(trade_id: int) -> dict[str, Any] | None:
                o.strategy_id, o.model_id,
                s.strategy_name, pm.model_name
         FROM trades t
-        JOIN markets m ON t.market_id = m.id
+        JOIN platform_markets m ON t.platform_market_id = m.id
         LEFT JOIN orders o ON t.order_id = o.id
         LEFT JOIN strategies s ON o.strategy_id = s.strategy_id
         LEFT JOIN probability_models pm ON o.model_id = pm.model_id

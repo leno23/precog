@@ -82,11 +82,11 @@ def backfill_event_times(*, dry_run: bool = False) -> int:
     if dry_run:
         count_query = """
             SELECT COUNT(*) AS cnt
-            FROM events e
+            FROM platform_events e
             WHERE (e.start_time IS NULL OR e.end_time IS NULL)
               AND EXISTS (
-                  SELECT 1 FROM markets m
-                  WHERE m.event_id = e.id
+                  SELECT 1 FROM platform_markets m
+                  WHERE m.platform_event_id = e.id
                     AND (m.open_time IS NOT NULL OR m.expiration_time IS NOT NULL)
               )
         """
@@ -94,20 +94,20 @@ def backfill_event_times(*, dry_run: bool = False) -> int:
         return int(row["cnt"]) if row else 0
 
     update_query = """
-        UPDATE events SET
-            start_time = COALESCE(events.start_time, sub.min_open),
-            end_time = COALESCE(events.end_time, sub.max_exp),
+        UPDATE platform_events SET
+            start_time = COALESCE(platform_events.start_time, sub.min_open),
+            end_time = COALESCE(platform_events.end_time, sub.max_exp),
             updated_at = NOW()
         FROM (
-            SELECT event_id,
+            SELECT platform_event_id,
                    MIN(open_time) AS min_open,
                    MAX(expiration_time) AS max_exp
-            FROM markets
+            FROM platform_markets
             WHERE open_time IS NOT NULL OR expiration_time IS NOT NULL
-            GROUP BY event_id
+            GROUP BY platform_event_id
         ) sub
-        WHERE events.id = sub.event_id
-          AND (events.start_time IS NULL OR events.end_time IS NULL)
+        WHERE platform_events.id = sub.platform_event_id
+          AND (platform_events.start_time IS NULL OR platform_events.end_time IS NULL)
     """
     with get_cursor(commit=True) as cur:
         cur.execute(update_query)
@@ -142,8 +142,8 @@ def backfill_event_status(*, dry_run: bool = False) -> dict[str, int]:
                 SELECT e.id,
                        COUNT(m.id) AS total,
                        COUNT(m.id) FILTER (WHERE m.status = 'settled') AS settled
-                FROM events e
-                JOIN markets m ON m.event_id = e.id
+                FROM platform_events e
+                JOIN platform_markets m ON m.platform_event_id = e.id
                 WHERE e.status IS NULL
                 GROUP BY e.id
                 HAVING COUNT(m.id) > 0
@@ -159,24 +159,24 @@ def backfill_event_status(*, dry_run: bool = False) -> dict[str, int]:
 
     # Set 'final' for fully settled events
     final_query = """
-        UPDATE events SET status = 'final', updated_at = NOW()
+        UPDATE platform_events SET status = 'final', updated_at = NOW()
         WHERE status IS NULL
           AND id IN (
-              SELECT event_id
-              FROM markets
-              GROUP BY event_id
+              SELECT platform_event_id
+              FROM platform_markets
+              GROUP BY platform_event_id
               HAVING COUNT(*) = COUNT(*) FILTER (WHERE status = 'settled')
                  AND COUNT(*) > 0
           )
     """
     # Set 'live' for partially settled / open events
     live_query = """
-        UPDATE events SET status = 'live', updated_at = NOW()
+        UPDATE platform_events SET status = 'live', updated_at = NOW()
         WHERE status IS NULL
           AND id IN (
-              SELECT event_id
-              FROM markets
-              GROUP BY event_id
+              SELECT platform_event_id
+              FROM platform_markets
+              GROUP BY platform_event_id
               HAVING COUNT(*) > COUNT(*) FILTER (WHERE status = 'settled')
                  AND COUNT(*) > 0
           )
@@ -210,10 +210,10 @@ def backfill_event_results(*, dry_run: bool = False) -> int:
     # Find events needing result population
     find_query = """
         SELECT e.id AS event_id
-        FROM events e
+        FROM platform_events e
         WHERE e.status = 'final'
           AND e.result IS NULL
-          AND EXISTS (SELECT 1 FROM markets m WHERE m.event_id = e.id)
+          AND EXISTS (SELECT 1 FROM platform_markets m WHERE m.platform_event_id = e.id)
     """
     events = fetch_all(find_query)
 
@@ -226,8 +226,8 @@ def backfill_event_results(*, dry_run: bool = False) -> int:
         # Fetch child markets
         market_query = """
             SELECT ticker, settlement_value, status
-            FROM markets
-            WHERE event_id = %s
+            FROM platform_markets
+            WHERE platform_event_id = %s
             ORDER BY ticker
         """
         markets = fetch_all(market_query, (eid,))
@@ -249,7 +249,7 @@ def backfill_event_results(*, dry_run: bool = False) -> int:
 
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE events SET result = %s, updated_at = NOW() WHERE id = %s",
+                "UPDATE platform_events SET result = %s, updated_at = NOW() WHERE id = %s",
                 (json.dumps(result_json), eid),
             )
             if cur.rowcount and cur.rowcount > 0:
@@ -282,8 +282,8 @@ def backfill_market_settlement_values(
     find_query = """
         SELECT m.id, m.ticker, m.status, m.metadata,
                e.external_id AS event_ticker
-        FROM markets m
-        LEFT JOIN events e ON e.id = m.event_id
+        FROM platform_markets m
+        LEFT JOIN platform_events e ON e.id = m.platform_event_id
         WHERE m.status = 'settled'
           AND m.settlement_value IS NULL
     """
@@ -348,7 +348,7 @@ def backfill_market_settlement_values(
             if sv is not None:
                 with get_cursor(commit=True) as cur:
                     cur.execute(
-                        "UPDATE markets SET settlement_value = %s, updated_at = NOW() WHERE id = %s",
+                        "UPDATE platform_markets SET settlement_value = %s, updated_at = NOW() WHERE id = %s",
                         (sv, mkt["id"]),
                     )
                 updated += 1

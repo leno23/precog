@@ -364,7 +364,7 @@ class TestValidateTypePrecision:
 
         # Mock all price tables with correct precision
         def column_lookup(table_name):
-            if table_name == "markets":
+            if table_name == "platform_markets":
                 return [
                     {
                         "column_name": "yes_bid",
@@ -396,7 +396,7 @@ class TestValidateTypePrecision:
         """Verify error when price column uses FLOAT instead of DECIMAL."""
 
         def column_lookup(table_name):
-            if table_name == "markets":
+            if table_name == "platform_markets":
                 return [
                     {
                         "column_name": "settlement_value",
@@ -421,7 +421,7 @@ class TestValidateTypePrecision:
         """Verify error when DECIMAL has wrong precision."""
 
         def column_lookup(table_name):
-            if table_name == "markets":
+            if table_name == "platform_markets":
                 return [
                     {
                         "column_name": "settlement_value",
@@ -763,8 +763,8 @@ class TestIntegration:
         # Verify all expected tables were checked
         call_args = [call[0][0] for call in mock_columns.call_args_list]
         expected_tables = [
-            "markets",
-            "market_snapshots",
+            "platform_markets",
+            "platform_market_snapshots",
             "positions",
             "trades",
             "edges",
@@ -785,6 +785,6 @@ class TestIntegration:
 
         # Verify all expected versioned tables were checked
         call_args = [call[0][0] for call in mock_columns.call_args_list]
-        expected_tables = ["market_snapshots", "positions", "game_states", "edges"]
+        expected_tables = ["platform_market_snapshots", "positions", "game_states", "edges"]
         for table in expected_tables:
             assert table in call_args, f"Table '{table}' not checked for SCD Type 2"

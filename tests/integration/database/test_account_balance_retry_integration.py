@@ -70,7 +70,7 @@ def retry_integration_platform(db_pool: Any) -> Any:
     # Setup: clean any leftover state and ensure the platform row exists.
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "DELETE FROM settlements WHERE platform_id = %s",
+            "DELETE FROM platform_settlements WHERE platform_id = %s",
             (TEST_PLATFORM,),
         )
         cur.execute(
@@ -97,7 +97,7 @@ def retry_integration_platform(db_pool: Any) -> Any:
     try:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "DELETE FROM settlements WHERE platform_id = %s",
+                "DELETE FROM platform_settlements WHERE platform_id = %s",
                 (TEST_PLATFORM,),
             )
             cur.execute(

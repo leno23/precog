@@ -1,7 +1,7 @@
 """CRUD operations for canonical_markets.
 
 Cohort 2 of the canonical-layer foundation (ADR-118 V2.39 amendment, session 73
-capture, Cohort 2 amendment).  Sister module to ``crud_events.py``; uses the
+capture, Cohort 2 amendment).  Sister module to ``crud_platform_events.py``; uses the
 same raw-psycopg2 + ``get_cursor`` / ``fetch_one`` + RealDictCursor + heavy-
 docstring conventions.
 
@@ -32,7 +32,7 @@ Reference:
     - ``docs/foundation/ARCHITECTURE_DECISIONS_V2.40.md`` lines ~17363-17541
       (Cohort 2 amendment + DDL + decision rationale)
     - ``src/precog/database/alembic/versions/0069_canonical_markets_foundation.py``
-    - ``src/precog/database/crud_events.py`` (style reference)
+    - ``src/precog/database/crud_platform_events.py`` (style reference)
 """
 
 import json
@@ -102,7 +102,7 @@ def create_canonical_market(
             persists what the caller provides.  ``UNIQUE`` constraint â€"
             duplicate hashes raise ``psycopg2.IntegrityError``.
         metadata: Optional JSONB dict.  Serialized via ``json.dumps`` (mirrors
-            the ``crud_events.create_event()`` metadata convention).
+            the ``crud_platform_events.create_event()`` metadata convention).
 
     Returns:
         Full row dict of the created canonical market.  Keys:
@@ -211,7 +211,7 @@ def get_canonical_market_by_id(canonical_market_id: int) -> dict[str, Any] | Non
 
     Reference:
         - Migration 0069 (table DDL)
-        - ``crud_events.get_event()`` (sibling lookup-by-PK pattern)
+        - ``crud_platform_events.get_event()`` (sibling lookup-by-PK pattern)
     """
     query = """
         SELECT id, canonical_event_id, market_type_general, outcome_label,

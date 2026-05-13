@@ -7,7 +7,7 @@ clean database state without expensive DELETE/INSERT cleanup cycles.
 
 Why Transaction Rollback?
     Traditional test cleanup uses DELETE statements before/after each test:
-    - DELETE FROM trades WHERE market_id LIKE 'TEST-%'  (~5-50ms per table)
+    - DELETE FROM trades WHERE platform_market_id LIKE 'TEST-%'  (~5-50ms per table)
     - With 10+ tables, cleanup takes 50-500ms per test
     - 500 tests x 100ms = 50 seconds wasted on cleanup alone
 
@@ -41,7 +41,7 @@ Usage:
     def my_test_data(db_transaction):
         '''Test data created inside transaction - auto-rolled-back.'''
         cursor = db_transaction
-        cursor.execute("INSERT INTO markets ...")
+        cursor.execute("INSERT INTO platform_markets ...")
         yield cursor
         # No cleanup needed - transaction rolled back automatically
 
@@ -90,7 +90,7 @@ def db_transaction() -> Generator[psycopg2.extensions.cursor, None, None]:
             '''Test creates data that is automatically cleaned up.'''
             cursor = db_transaction
             cursor.execute(
-                "INSERT INTO markets (market_id, ...) VALUES (%s, ...)",
+                "INSERT INTO platform_markets (ticker, ...) VALUES (%s, ...)",
                 ("TEST-MKT-001", ...)
             )
             # Changes automatically rolled back after test
@@ -102,7 +102,7 @@ def db_transaction() -> Generator[psycopg2.extensions.cursor, None, None]:
         DELETE-based cleanup for most test scenarios.
 
         Compare:
-        - DELETE FROM markets WHERE market_id LIKE 'TEST-%'  # Scans table, logs changes
+        - DELETE FROM platform_markets WHERE ticker LIKE 'TEST-%'  # Scans table, logs changes
         - ROLLBACK  # Instant, no I/O
 
     Warning:
@@ -155,7 +155,7 @@ def db_transaction_with_setup(
             cursor = db_transaction_with_setup
             # test_platform, TEST-SERIES-NFL, TEST-EVT-NFL-KC-BUF already exist
             cursor.execute(
-                "INSERT INTO positions (market_id, strategy_id, ...) VALUES (%s, %s, ...)",
+                "INSERT INTO positions (platform_market_id, strategy_id, ...) VALUES (%s, %s, ...)",
                 ("MKT-TEST-001", 99901, ...)
             )
             # All changes (including setup data) rolled back after test
@@ -176,17 +176,17 @@ def db_transaction_with_setup(
 
     # Create test series
     cursor.execute("""
-        INSERT INTO series (series_key, platform_id, external_id, title, category)
+        INSERT INTO platform_series (series_key, platform_id, external_id, title, category)
         VALUES ('TEST-SERIES-NFL', 'test_platform', 'TEST-EXT-SERIES', 'Test NFL Series', 'sports')
         ON CONFLICT (series_key) WHERE row_current_ind = TRUE DO NOTHING
     """)
 
     # Get series surrogate PK for event FK (migration 0019: series_key)
-    cursor.execute("SELECT id FROM series WHERE series_key = 'TEST-SERIES-NFL'")
+    cursor.execute("SELECT id FROM platform_series WHERE series_key = 'TEST-SERIES-NFL'")
     _sr = cursor.fetchone()
     _series_pk = _sr["id"] if _sr else None
 
-    # Create test event (uses series_id integer FK to series.id)
+    # Create test event (uses platform_series_id integer FK to platform_series.id).
     # external_id is the canonical business key (migration 0047 dropped event_id column).
     #
     # Migration 0062 (#791): events.event_key is NOT NULL + UNIQUE.  This
@@ -202,7 +202,7 @@ def db_transaction_with_setup(
 
     cursor.execute(
         """
-        INSERT INTO events (platform_id, series_id, external_id, category, title, status, event_key)
+        INSERT INTO platform_events (platform_id, platform_series_id, external_id, category, title, status, event_key)
         VALUES ('test_platform', %s, 'TEST-EVT-NFL-KC-BUF', 'sports', 'Test Event: KC vs BUF', 'scheduled', %s)
         ON CONFLICT (platform_id, external_id) DO NOTHING
         RETURNING id
@@ -212,14 +212,14 @@ def db_transaction_with_setup(
     _evt_row = cursor.fetchone()
     if _evt_row is not None:
         cursor.execute(
-            "UPDATE events SET event_key = %s WHERE id = %s",
+            "UPDATE platform_events SET event_key = %s WHERE id = %s",
             (f"EVT-{_evt_row['id']}", _evt_row["id"]),
         )
 
     # Create additional test event for compatibility
     cursor.execute(
         """
-        INSERT INTO events (platform_id, series_id, external_id, category, title, status, event_key)
+        INSERT INTO platform_events (platform_id, platform_series_id, external_id, category, title, status, event_key)
         VALUES ('test_platform', %s, 'TEST-EVT-2', 'sports', 'Test Event 2', 'scheduled', %s)
         ON CONFLICT (platform_id, external_id) DO NOTHING
         RETURNING id
@@ -229,7 +229,7 @@ def db_transaction_with_setup(
     _evt_row = cursor.fetchone()
     if _evt_row is not None:
         cursor.execute(
-            "UPDATE events SET event_key = %s WHERE id = %s",
+            "UPDATE platform_events SET event_key = %s WHERE id = %s",
             (f"EVT-{_evt_row['id']}", _evt_row["id"]),
         )
 
@@ -275,13 +275,13 @@ def db_savepoint(
             # Create savepoint before operation
             sp1 = savepoints.create("before_insert")
 
-            cursor.execute("INSERT INTO markets ...")
+            cursor.execute("INSERT INTO platform_markets ...")
 
             # Rollback to savepoint (simulating error recovery)
             savepoints.rollback_to(sp1)
 
             # Verify insert was rolled back
-            cursor.execute("SELECT COUNT(*) FROM markets WHERE ...")
+            cursor.execute("SELECT COUNT(*) FROM platform_markets WHERE ...")
             assert cursor.fetchone()['count'] == 0
 
     Educational Note:

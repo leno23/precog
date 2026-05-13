@@ -62,12 +62,12 @@ def _cleanup_canonical_market(canonical_market_id: int) -> None:
 
 
 def _seed_platform_market(suffix: str) -> int:
-    """Seed a platform markets row to back canonical_market_links.platform_market_id."""
+    """Seed a platform_markets row to back canonical_market_links.platform_market_id."""
     with get_cursor(commit=True) as cur:
         cur.execute(
             """
-            INSERT INTO markets (
-                platform_id, event_id, external_id, ticker, title,
+            INSERT INTO platform_markets (
+                platform_id, platform_event_id, external_id, ticker, title,
                 market_type, status, market_key
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
@@ -87,9 +87,12 @@ def _seed_platform_market(suffix: str) -> int:
 
 
 def _cleanup_platform_market(platform_market_id: int) -> None:
-    """Remove a platform markets row seeded by _seed_platform_market."""
+    """Remove a platform_markets row seeded by _seed_platform_market."""
     with get_cursor(commit=True) as cur:
-        cur.execute("DELETE FROM markets WHERE id = %s", (platform_market_id,))
+        cur.execute(
+            "DELETE FROM platform_markets WHERE id = %s",
+            (platform_market_id,),
+        )
 
 
 def _seed_canonical_market_link(
