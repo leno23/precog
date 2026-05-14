@@ -11,9 +11,16 @@ platform_market_snapshots, market_trades -> platform_market_trades,
 orderbook_snapshots -> platform_orderbook_snapshots, settlements ->
 platform_settlements); 15 FK columns renamed accordingly; OQ-H1 trailing-1
 sequence normalization applied (PRESERVE -> NORMALIZE flip per session 104
-commit 4d74317). Pure structural rename — no row count or semantic changes.
-ADR-118 V2.48 (PR #1180) is the canonical naming-convention authority.
-Cohort 5+ Slot A SHIPPED; follow-on epic #1184 tracks 6 deferred items.
+commit 4d74317; codified in ADR-118 V2.49 § V2.49-A through § V2.49-G,
+session 105). Pure structural rename — no row count or semantic changes.
+ADR-118 V2.48 (PR #1180) is the canonical naming-convention authority;
+V2.49 is the canonical record of the OQ-H1 flip and retires V2.48 § V2.48-I
+item 5 (cosmetic cleanup completed in-slot).
+Cohort 5+ Slot A SHIPPED; follow-on epic #1184 tracks 6 deferred items
+(OQ-H1 was retired in-slot per V2.49 and is therefore not in the filed
+epic — the skeleton item was removed during epic authoring before
+the issue was filed; #1184 was opened with 6 items and OQ-H1 was
+never among them).
 
 Table count: 63 (unchanged — rename only). Migration count: 85 -> 86 (added 0090).
 -->
