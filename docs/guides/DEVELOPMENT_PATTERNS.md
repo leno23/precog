@@ -1,13 +1,17 @@
 # Precog Development Patterns Guide
 
 ---
-**Version:** 1.45
+**Version:** 1.46
 **Created:** 2025-11-13
-**Last Updated:** 2026-05-10
+**Last Updated:** 2026-05-13
 **Purpose:** Comprehensive reference for critical development patterns used throughout the Precog project
 **Target Audience:** Developers and AI assistants working on any phase of the project
 **Extracted From:** CLAUDE.md V1.15 (Section: Critical Patterns, Lines 930-2027)
 **Status:** ✅ Current
+**Changes in V1.46:**
+- **Pattern 96 NEW: Comprehensive Audit-Set Discipline for Code Modifications (ALWAYS for Modifications Where Affected Sites Span Multiple Code Categories).** Session 104 corpus: N=7+ cascade waves of audit-set incompleteness across the Migration 0090 Phase 4+5+6 retrospective, surfacing at varied catch-stages (post-Phase 5 review integration -x; Glokta P1 #1+2 on Samwise commit; Phase 4 cascade integration -x; Ripley sentinel trailing-1 cascade; pre-push race-tier production miss on `crud_platform_markets.py:318`; pre-push unit tier on `test_validate_schema_consistency.py` same-module-name shape). Codifies the 8-category audit-set enumeration that PM dispatch prompts MUST include at dispatch time — modified production code, callers, unit tests for modified module, integration tests, race-tier / e2e tests, operator runbooks + schema documentation, SQL literal strings + comments, docstrings + module-level constants. Broader-grep is a discovery backstop, not a substitute for explicit enumeration. Severity: HIGH (cascade-wave shape recurred 6 times in a single session; recovery cost ~5 hours session-time vs ~5 minutes per dispatch for upfront enumeration). Source memo: `memory/session_104_close_summary.md` § "Critical session moments" #3 + § "Pattern 91 evidence summary".
+- **Active-pattern count:** 93 → 94 active (96 numbered slots − 2 reserved: 51 + 85; counting active includes Pattern 96).
+- **Promotion source:** session 104 recursive-retrospective corpus + Pattern 91 N=7+ evidence summary (`session_104_close_summary.md`).
 **Changes in V1.45:**
 - **Pattern 91 V1.45+ scope expansion: PM dispatch-prompt-authoring tier added.** Builder dispatch prompts terminate at LOCAL COMMIT; PM owns the push + PR-open step after diff-scoped review fires. Cites the ANNOUNCE template's DESIGN REVIEW + DIFF-SCOPED REVIEW + SPECIALIST TRIGGERS surface as a sequencing contract — each must be a separately-scheduled stage. N=9 explicit chain-of-trust catches enumerated across sessions 94+95+96+98 (conservative cumulative aggregate ≥N=11 including V1.44 sessions 89-91 carry-forward; `memory/feedback_chain_of_trust_pattern91_violation.md`); session 98 added the dispatch-prompt-authoring tier as an additional verification surface beyond V1.44 scope (`memory/feedback_tier2_review_sequencing_dispatch_protocol.md`).
 - **Pattern 82 V2 scope-narrowing: applicable scope reduced to canonical_markets only post-Slot-2.** Migration 0086 (cleanup epic Slot 2, session 96) flipped FK direction (teams → canonical_entities) and dropped both `canonical_entities.ref_team_id` and the polymorphic enforcement trigger `trg_canonical_entity_team_backref`. Pattern 82 V1's canonical-entity-team variant is retired; the V2 scope (canonical_markets only) is now the active surface.
@@ -14043,6 +14047,237 @@ Before any edit to a migration trigger function HEREDOC:
 - Slot 0076 / Migration 0076 / PR #1098 (V2.42 sub-amendment A) — `set_updated_at()` trigger function HEREDOC; original precedent.
 - Slot 4 / Migration 0088 / PR #1173 (session 98) — `canonical_market_phase_log` trigger function HEREDOC; S68 nit reaffirmation.
 - Session 98 fix-pass / Ripley S60 audit memo — promotion-candidate flag.
+
+---
+
+## Pattern 96: Comprehensive Audit-Set Discipline for Code Modifications (ALWAYS for Modifications Where Affected Sites Span Multiple Code Categories)
+
+**Severity:** HIGH — when a Builder dispatch's audit-set is incomplete, the modification ships with adjacent sites still pointing at the old shape. Each missed site is a future failure: a pre-push tier turns red, a CI run breaks, an operator runs a runbook step that no longer matches the schema, or — worst — the gap is silent until production. The session 104 corpus showed 6 distinct cascade waves emerging from a single 3-phase modification arc (Migration 0090 Phases 4+5+6), each wave catching what the previous Builder + broader-grep step missed. The cost of late catches scales with the distance between modification and detection (Reviewer < pre-push < CI < production). The cost of upfront audit-set enumeration is one pre-dispatch pass over the project's standard 8-category surface — minutes per dispatch, structural in shape.
+
+### Problem / Trigger
+
+A PM dispatches a Builder for a modification task — a column rename, a function signature change, a schema migration retrofit, a refactor, a deprecation cleanup. The dispatch prompt lists the obvious modified production code + obvious-callers + an "also broader-grep for downstream impact" instruction. The Builder executes the modification, runs broader-grep, finds the additional production sites grep can see, and reports back clean.
+
+Then the failures begin to surface — not in the Builder's report, but downstream:
+
+- Unit tests for the modified module itself fail (the test file's name pattern didn't grep-match against the SUT module name)
+- Operator runbooks reference the old column name in prose (markdown text outside any grep scope a Builder typically runs)
+- A race-tier or e2e test exercises the modified path via an FK chain (lives in `tests/race/` or `tests/e2e/`, distant from the modified `src/precog/database/` tree)
+- A SQL literal string inside a CRUD function references the old identifier (grep on the symbol catches it; grep on the *function* shape doesn't)
+- A docstring describes a method's behavior using the old name (downstream readers inherit stale documentation)
+- A schema documentation file (e.g., `DATABASE_SCHEMA_SUMMARY`) references the old column in a freshness-marker table
+- An integration test exercises the modified path through a *different* test fixture file (the audit's grep scope was the SUT module's name; the test file uses a different naming convention)
+- A constant or module-level tuple enumerates valid values that need updating in lockstep
+
+The naive PM (or agent author) reaction: "The Builder ran broader-grep — surely that caught everything reachable from the modification?" This is wrong because broader-grep operates on **symbol-level matching**, while the missed sites operate on **cross-category surfaces**: file-name patterns, prose, distant test trees, SQL literal strings, freshness markers, etc. Broader-grep is necessary, not sufficient.
+
+**Session 104 origin (the canonical failure mode):** the Migration 0090 (platform-prefix-rename) retrospective coverage closure produced six cascade waves of audit-set incompleteness:
+
+1. **Phase 5 initial miss:** `test_crud_positions_trailing_stop_integration.py` (caught by integration -x at session start, AFTER Phase 5 had landed clean review)
+2. **Glokta P1 #1+2:** `test_migration_idempotency.py` + `test_database_connection.py` (caught by Glokta review of Samwise's Phase 5 commit `6987db1`)
+3. **Phase 4 cascade:** `test_initialization_integration.py` (caught by integration -x after Phase 4 retrospective)
+4. **Phase 6 trailing-1 cascade:** `test_migration_0090*` + `test_database_crud_properties` + an operator runbook (caught by Ripley sentinel on Nagilum commit)
+5. **Race-tier production miss:** `crud_platform_markets.py:318` (caught by pre-push validation race tier — the broader-grep had missed it)
+6. **Unit-test cascade:** `test_validate_schema_consistency.py` (caught by pre-push validation unit tier — the same-module-name shape, outside ANY Builder's grep scope, since test files are explicitly excluded from src/ scope)
+
+The mitigation Nagilum's prompt embedded — an EXPLICIT broader-grep step — DEMONSTRABLY worked: Nagilum found 4 NEW production read-path sites beyond the candidate list (`crud_orders.py:544`; `crud_analytics.py:402/460/473`). The broader-grep is real signal. **But it is not sufficient.** Wave 6 in particular — the unit-test file `test_validate_schema_consistency.py` shadowing the renamed `scripts/validate_schema_consistency.py` SUT — was outside any plausible grep scope a Builder runs because test files are explicitly excluded when the audit target is "production code touched by this rename."
+
+### The Pattern / Rule
+
+> When dispatching a Builder for any modification task (rename / refactor / schema change / signature change / migration retrofit / deprecation cleanup), the dispatch prompt MUST enumerate the full audit-set — not just modified production code but the complete cross-category surface: production callers, unit tests for the modified module, integration / race / e2e tests touching the modified path, operator runbooks, schema documentation, SQL literal strings + comments, and docstrings + module-level constants. The audit-set is dispatched explicitly; broader-grep is a discovery backstop, not a substitute for explicit enumeration. If broader-grep surfaces a site OUTSIDE the enumerated audit-set, the Builder flags it back to PM for adjudication rather than silently extending scope.
+
+**Anti-pattern shape:** Builder dispatch prompt says "modify X in these files" + "also broader-grep for downstream impact." The broader-grep catches what's obvious from symbol-level grep scope; misses cross-category sites that don't grep-match cleanly (file-name patterns, runbook prose, distant test trees, freshness markers, etc.). Cross-category coverage gaps surface only at later phases — Reviewer, Sentinel, pre-push validation, or CI — at asymmetrically higher recovery cost than upfront enumeration.
+
+### Canonical Shape
+
+**At PM dispatch time, the audit-set MUST include (at minimum) these 8 categories:**
+
+```text
+1. MODIFIED PRODUCTION CODE — the obvious site(s).
+   Example (Migration 0090): src/precog/database/crud_platform_events.py,
+   crud_platform_markets.py, and 11 other production files explicitly
+   listed in the Phase 4 build spec.
+
+2. PRODUCTION-CODE CALLERS OF MODIFIED API — grep-discoverable.
+   Example: `grep -r "open_platform_event(" src/` to find every call site
+   of a renamed function. Broader-grep handles this category well.
+
+3. UNIT TESTS FOR THE MODIFIED MODULE — sometimes grep-discoverable,
+   often NOT (same-module-name shape).
+   Example: modifying `scripts/validate_schema_consistency.py` should
+   audit `tests/unit/scripts/test_validate_schema_consistency.py`.
+   The test file is NOT in src/ scope, so a src-restricted broader-grep
+   misses it. Enumerate the test-file-for-modified-SUT shape explicitly.
+
+4. INTEGRATION TESTS EXERCISING THE MODIFIED PATH — often only
+   discoverable via grep + test-tree knowledge.
+   Example: `tests/integration/test_initialization_integration.py`
+   asserts on column names that downstream from the modification.
+   Symbol-grep finds it if it uses the symbol; misses it if it uses
+   the column name in a SQL literal or fixture dict.
+
+5. RACE-TIER / E2E TESTS TOUCHING THE MODIFIED PATH — distant tree;
+   require explicit enumeration.
+   Example: `tests/race/` and `tests/e2e/` trees are far from
+   `src/precog/database/`; a tree-scoped broader-grep on src/ never
+   visits them. Audit these trees as a separate enumeration line.
+
+6. OPERATOR RUNBOOKS + DATABASE DOCUMENTATION — prose; only catches
+   via doc-tree grep.
+   Example: `docs/database/RUNBOOK_*.md` references column names in
+   prose ("Run UPDATE positions SET market_id = ..."). The runbook
+   text becomes non-executable when the column is renamed; no grep
+   on Python code finds this.
+
+7. SQL LITERAL STRINGS + COMMENTS IN CODE — require literal-text grep,
+   not symbol-grep.
+   Example: `cursor.execute("SELECT market_id FROM positions ...")`
+   contains the renamed column inside a string literal. Symbol-level
+   grep on the module name doesn't catch SQL literals; a separate
+   literal-text grep does.
+
+8. DOCSTRINGS + MODULE-LEVEL CONSTANTS — easily forgotten when
+   the modification is "code only."
+   Example: `VALID_MARKET_FIELDS = ("market_id", ...)` references
+   the old name. Docstrings on the modified function describe its
+   behavior using the old identifier. These ship as stale documentation
+   even when the code is correct.
+
+For each category in the dispatch prompt, state EITHER:
+  (a) the specific file/directory paths to audit, OR
+  (b) "N/A: <reason>" if the category does not apply to this modification.
+
+Stating "N/A" forces the dispatch author to consider each category;
+silence is the failure mode this discipline addresses.
+```
+
+**At Builder execution time:**
+
+1. Apply the modification across every site in the enumerated audit-set.
+2. **Run broader-grep as a backstop** (not as primary discovery). If broader-grep surfaces a site that is NOT in the audit-set, **flag it to PM for adjudication** — do not silently extend scope. This is the discovery-vs-creep boundary: broader-grep can EXTEND the audit-set with PM approval, but cannot replace upfront enumeration.
+3. Report back: (i) audit-set sites modified; (ii) broader-grep findings, separated into "in audit-set" vs "new, flagged for PM adjudication"; (iii) any category from the enumerated 8 the Builder could not interpret.
+
+**At Reviewer + pre-push validation:**
+
+The pre-push validation script (`scripts/pre-push-validation.sh`) runs all 8 test tiers and is the project's structural backstop for audit-set incompleteness. When pre-push validation surfaces a failure attributable to audit-set incompleteness (vs an actual semantic bug), the post-fix discipline MUST update the next dispatch's audit-set enumeration to include the missed category. The category list above is not closed — extend it as new cross-category shapes emerge.
+
+### Wrong (Session 104 Actual)
+
+```text
+Phase 4 Builder dispatch (Nagilum) audit-set as originally specified:
+  - crud_platform_events.py + crud_platform_markets.py + 11 other
+    production files listed by name
+  - Standard "broader-grep for downstream impact" instruction
+
+Result: Nagilum found 4 NEW production read-path sites via the
+broader-grep step (crud_orders.py:544; crud_analytics.py:402/460/473) —
+proving the broader-grep WORKS within its scope. Phase 4 retrospective
+review (Joe Chip + Ripley) closed CLEAR-TO-MERGE.
+
+But session 104 then discovered 4 more cascade waves of audit-set
+incompleteness that broader-grep could not catch:
+
+  - Wave 3: test_initialization_integration.py
+    (integration test outside src/ scope; not grep-discoverable
+    from a src-anchored broader-grep)
+
+  - Wave 4: test_migration_0090* + test_database_crud_properties
+    + an operator runbook
+    (cascade from a trailing-1 normalization change; spans test files
+    + markdown runbook prose; multi-category coverage gap)
+
+  - Wave 5: crud_platform_markets.py:318
+    (race-tier production miss; the broader-grep scope did not surface
+    this caller because the calling site was inside a get_current_market
+    function reachable only via race-tier test invocation)
+
+  - Wave 6: test_validate_schema_consistency.py
+    (THE EXEMPLAR — when Nagilum renamed scripts/validate_schema_consistency.py
+    outputs, the corresponding tests/unit/scripts/test_validate_schema_consistency.py
+    was NOT in any broader-grep scope: different directory, different
+    naming pattern, test file explicitly excluded from src/ scope.
+    Pre-push unit tier caught 4 failing tests.)
+
+Per-wave recovery cost: from minutes (Tier 1 Momentum fix) to a full
+re-dispatch cycle. Cumulative cost across 6 waves: ~5 hours of session 104
+recursive-retrospective time. Upstream cost of explicit audit-set
+enumeration: ~5 minutes of PM dispatch-prompt authoring per modification.
+```
+
+### Right (Forward-Looking Discipline)
+
+```text
+For any Tier 2 modification task, PM dispatch prompt MUST include
+the explicit audit-set enumeration BEFORE the Builder begins:
+
+  ### Audit-set (per Pattern 96):
+
+  1. MODIFIED PRODUCTION CODE: <explicit file paths>
+  2. PRODUCTION-CODE CALLERS: <directory scope + grep candidates,
+     or "broader-grep responsibility per category 2 below">
+  3. UNIT TESTS FOR MODIFIED MODULE: <explicit test file paths>
+     OR "N/A: no unit test file currently exists; flag if found"
+  4. INTEGRATION TESTS: <explicit paths or "N/A: <reason>">
+  5. RACE-TIER / E2E TESTS: <explicit paths or "N/A: <reason>">
+  6. OPERATOR RUNBOOKS + SCHEMA DOCS: <explicit paths or "N/A">
+  7. SQL LITERAL STRINGS + COMMENTS: <grep candidates or "N/A">
+  8. DOCSTRINGS + MODULE-LEVEL CONSTANTS: <grep candidates or "N/A">
+
+  Builder responsibility:
+  - Modify every site in the audit-set above.
+  - Run broader-grep as a BACKSTOP (not primary discovery).
+  - If broader-grep surfaces a site OUTSIDE the audit-set, flag to PM.
+
+The Builder's broader-grep step is now a verification surface,
+not a discovery primitive. The Builder's job is to apply the
+modification across the audit-set + REPORT any new sites discovered
+via broader-grep that PM should adjudicate adding to scope.
+```
+
+### When to Apply
+
+- **ALWAYS for Tier 2 modification dispatches.** Any rename, refactor, schema change, signature change, migration retrofit, or deprecation cleanup that touches more than one file. The audit-set enumeration is the discipline that prevents the cascade-wave shape from session 104.
+- **ALWAYS when modifying canonical-layer schema or platform-prefix surfaces.** Cohort 4+ canonical-layer slots and platform-prefix renames have demonstrably wide blast radius across production + test + runbook + documentation trees. The 8-category enumeration is calibrated to these surfaces.
+- **ALWAYS when a previous modification produced a cascade-wave incident.** Once cascade-wave shape is observed for a given modification class, the next dispatch in that class inherits the extended audit-set. Session 104 added the same-module-name unit-test shape to the standard enumeration; subsequent platform-prefix-rename dispatches inherit it.
+
+### When NOT to Apply
+
+- **Tier 1 trivial modifications.** Single-file changes under ~20 lines, mechanical, no cross-module surface — the audit-set IS the modified file. Pattern 96 is silent.
+- **Greenfield code introduction.** New modules with no callers + no tests yet + no documentation references — Pattern 41 (Production-Readiness Checklist) governs greenfield instead; Pattern 96 governs modifications to existing code.
+- **Self-contained refactors with no external API change.** Renaming a private helper function inside a single module where no other file imports the symbol — the audit-set collapses to the module itself.
+
+### Cross-References
+
+- **Pattern 91 (MCP-First Premise Verification for Authoring Artifacts).** Orthogonal discipline. Pattern 91 verifies that authoring claims about live state are grounded in MCP-verified reality. Pattern 96 verifies that the audit-set for a modification dispatch is comprehensively enumerated. The two patterns share the same underlying observation — that PM-side discipline at authoring/dispatch time is asymmetrically cheaper than downstream pipeline catches — but address different failure modes. Pattern 91 = "is the claim true?"; Pattern 96 = "is the affected-site list complete?" PM Muad'Dib adjudicated Pattern 96 as a new slot rather than a Pattern 91 amendment for exactly this reason.
+- **Pattern 74 (Rename-Over-Rewrite for Audit Coverage Gaps).** Closest existing pattern in shape — both address audit-driven coverage. Pattern 74's mitigation is `git mv` (close the gap mechanically when siblings exist). Pattern 96's mitigation is upfront enumeration at dispatch time. Pattern 74 fires AFTER an audit reports a coverage gap; Pattern 96 fires BEFORE the dispatch that would create coverage gaps. They compose: Pattern 96 prevents the dispatch-side gap, Pattern 74 closes the audit-side gap when one exists.
+- **Pattern 72 (Scope Correction Via Mechanical Pre-ANNOUNCE Scoping).** Pattern 96 is Pattern 72 applied to the audit-set dimension. Pattern 72 says "before ANNOUNCE, mechanically verify scope by reading target files." Pattern 96 says "before dispatching a modification, mechanically enumerate the audit-set across 8 categories." Same upstream discipline; different surface (scope vs audit-set).
+- **Pattern 14 (Schema Migration → CRUD Operations Update Workflow).** Domain-specific instance of Pattern 96 for the schema-to-CRUD propagation case. Pattern 14 enumerates the 5-step workflow when a schema migration must propagate to CRUD code; Pattern 96 generalizes the discipline to the full 8-category surface. When the modification is a schema change, both patterns apply — Pattern 14 is the schema-to-CRUD-specific sub-case; Pattern 96 ensures the test + runbook + documentation surfaces are also enumerated.
+- **Pattern 43 (Mock Schema Fidelity) + V1.33 4-grep audit checklist.** Pattern 43's V1.33 extension codifies a 4-grep audit checklist for mock fidelity. Pattern 96 is the same shape (explicit enumeration of audit surface) applied at dispatch time across a wider category list.
+- **RCA #1182 dispatch-mode discipline.** `memory/rca_1182_joe_chip_brawne_synthesis.md` § Joe Chip's mitigation recommendation codifies dispatch-mode discipline (`run_in_background: true` for every Tier 2 dispatch). Pattern 96 is the audit-set companion to that operational discipline: dispatch-mode determines HOW the agent runs; audit-set determines WHAT the agent operates on.
+
+### Evidence Base
+
+**Session 104 corpus** (`memory/session_104_close_summary.md` § "Critical session moments" #3): six cascade waves of audit-set incompleteness across the Migration 0090 Phase 4+5+6 retrospective, surfacing at varied catch-stages:
+
+| Wave | Surface | Caught at | Recovery |
+|---|---|---|---|
+| 1 | `test_crud_positions_trailing_stop_integration.py` | Integration -x at session-104 start (post-Phase 5 review) | Tier 1 Momentum fix |
+| 2 | `test_migration_idempotency.py` + `test_database_connection.py` | Glokta review of Samwise's Phase 5 commit `6987db1` (P1 #1+2) | Commit `72460ea` Glokta-tail |
+| 3 | `test_initialization_integration.py` | Integration -x after Phase 4 retrospective | Commit `bbe1a71` Phase 4 cascade tail |
+| 4 | `test_migration_0090*` + `test_database_crud_properties` + operator runbook | Ripley sentinel on Nagilum commit | Commit `4d74317` OQ-H1 codification + runbook decay |
+| 5 | `crud_platform_markets.py:318` (race-tier production miss) | Pre-push validation race tier | Commit `514179b` Option B alias |
+| 6 | `test_validate_schema_consistency.py` (same-module-name unit test) | Pre-push validation unit tier | Commit `ce4b7d9` unit-test cascade |
+
+**The varied catch-stage across waves is itself signal:** audit-set incompleteness can leak past Builder dispatch, can leak past explicit broader-grep, can leak past Reviewer + Sentinel review — but the pre-push validation script (running all 8 test tiers) is the structural backstop that catches what every Builder + Reviewer dispatch missed. Pattern 96 pushes the discipline upstream from "caught at pre-push" to "enumerated at dispatch" — the cost differential is minutes vs hours.
+
+**N=7+ count.** Wave 1 (a single integration test caught post-review) is the lower bound; the cumulative 6 waves spanning unit + integration + race + runbook surfaces represent the upper bound. Conservatively N=7 distinct sites; expansively N=10+ if individual files inside each wave are counted separately. The project's standard pattern-promotion threshold is N=3 (see Pattern 91 V1.44 promotion). Pattern 94 and Pattern 95 were single-session promotions on N=1-2 strong-forensic evidence. Pattern 96's N=7+ from a single session, all from the same modification arc, all surfacing the same root cause (audit-set incompleteness), is unusually strong forensic evidence for a single-session promotion.
+
+### Source
+
+- **`memory/session_104_close_summary.md`** § "Critical session moments" #3 "The recursive retrospective pattern" + § "Pattern 91 evidence summary" + § "Open questions surfaced — not adjudicated this session" #1
+- **`memory/rca_1182_joe_chip_brawne_synthesis.md`** § Joe Chip's mitigation recommendation — dispatch-mode discipline; operational companion to Pattern 96's audit-set discipline
+- Session 104 commits `fdffd93` (conftest FK) + `6987db1` (Phase 5) + `72460ea` (Glokta tail) + `1de280b` (Phase 4) + `bbe1a71` (Phase 4 cascade tail) + `4d74317` (OQ-H1) + `514179b` (Option B alias) + `ce4b7d9` (unit-test cascade) — the in-flight evidence trail
+- PR-Y #1183 — the PR that shipped Migration 0090 across 14 commits + the recursive-retrospective convergence
 
 ---
 
