@@ -1,6 +1,22 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0089, verified=2026-05-09, tables=63, migrations=85, last_changelog_migration=0089 -->
+<!-- FRESHNESS: alembic_head=0090, verified=2026-05-13, tables=63, migrations=86, last_changelog_migration=0090 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0089 -> 0090 (V2.4 amended-in-place, 2026-05-13):
+
+Migration 0090 (PR #1183, merged 2026-05-13): platform-prefix rename slot —
+7 platform-side base tables renamed (events -> platform_events, markets ->
+platform_markets, series -> platform_series, market_snapshots ->
+platform_market_snapshots, market_trades -> platform_market_trades,
+orderbook_snapshots -> platform_orderbook_snapshots, settlements ->
+platform_settlements); 15 FK columns renamed accordingly; OQ-H1 trailing-1
+sequence normalization applied (PRESERVE -> NORMALIZE flip per session 104
+commit 4d74317). Pure structural rename — no row count or semantic changes.
+ADR-118 V2.48 (PR #1180) is the canonical naming-convention authority.
+Cohort 5+ Slot A SHIPPED; follow-on epic #1184 tracks 6 deferred items.
+
+Table count: 63 (unchanged — rename only). Migration count: 85 -> 86 (added 0090).
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0087 -> 0089 (V2.4 amended-in-place, 2026-05-09):
 
