@@ -1885,7 +1885,7 @@ The schema MUST support per-canonical-market resolution-state divergence from ca
 **Success Criteria:**
 - The 4 stress cases above are individually representable in the post-Migration-0088 schema without ambiguity (verified via cross-domain stress test in Galadriel session 98 memo § 2)
 - The four-distinct-concerns model (`canonical_events.lifecycle_phase` + `canonical_markets.lifecycle_phase` + platform `markets.status` + `canonical_markets.retired_at`) is documented in `CANONICAL_LAYER_RELATIONSHIPS.md` and referenced from ADR-118 V2.47-D
-- The 5-axis tier-separation test (Pattern 92, DEVELOPMENT_PATTERNS V1.45) is available as a forward-discipline mechanism to prevent recurrence of the session 94 D2 duplicate verdict that this REQ recovers from
+- The tier-separation test (Pattern 92, DEVELOPMENT_PATTERNS — currently 6-axis as of V1.47; see `docs/guides/DEVELOPMENT_PATTERNS.md` for axis count) is available as a forward-discipline mechanism to prevent recurrence of the session 94 D2 duplicate verdict that this REQ recovers from
 
 ---
 

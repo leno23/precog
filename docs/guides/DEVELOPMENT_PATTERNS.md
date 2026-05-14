@@ -1,13 +1,16 @@
 # Precog Development Patterns Guide
 
 ---
-**Version:** 1.46
+**Version:** 1.47
 **Created:** 2025-11-13
 **Last Updated:** 2026-05-13
 **Purpose:** Comprehensive reference for critical development patterns used throughout the Precog project
 **Target Audience:** Developers and AI assistants working on any phase of the project
 **Extracted From:** CLAUDE.md V1.15 (Section: Critical Patterns, Lines 930-2027)
 **Status:** ✅ Current
+**Changes in V1.47:**
+- **Pattern 92 amendment: 5-Axis → 6-Axis Tier-Separation Test (NEW Axis 5: cross-environment verification).** Origin: Migration 0090 multi-session arc (sessions 101-104). Phase 4 MCP-probed the dev DB only; Phase 6 hit `relation "markets_pkey" does not exist` against the CI test DB (which carried the auto-named `markets_pkey1` form because of historical drop/recreate ordering divergence). Build spec OQ-H1 flipped PRESERVE → NORMALIZE; Migration 0090 gained a Step 0 idempotent pre-step. Axis 5 codifies audit-time discipline: when grounding a verdict in environment-conditional PG artifacts (auto-named pkey/uq constraints, partition-side index names per Pattern 88a, trigger-function bodies per Pattern 95, sequence ownership), the audit MUST probe each environment a downstream consumer will execute against OR explicitly scope the verdict to the single probed environment. Also broadens Pattern 92's title parenthetical to cover migration/rename/FK retarget verdicts (not just column-level duplication verdicts) — the broadened Anti-Recurrence Test scope. Updates 3 cross-doc citations (`ARCHITECTURE_DECISIONS.md:90`, `MASTER_REQUIREMENTS_V2.27.md:1888`, `CANONICAL_LAYER_RELATIONSHIPS.md:594`) to V1.47 / 6-axis. Source memos: `memory/session_103_close_summary.md` § 4 + `memory/build_spec_0090_platform_rename_pm_memo.md` OQ-H1 + `memory/session_104_close_summary.md` "Forward-watch for session 105" item 5.
+- **Active-pattern count:** unchanged at 94 active (Pattern 92 amended, not a new slot).
 **Changes in V1.46:**
 - **Pattern 96 NEW: Comprehensive Audit-Set Discipline for Code Modifications (ALWAYS for Modifications Where Affected Sites Span Multiple Code Categories).** Session 104 corpus: N=7+ cascade waves of audit-set incompleteness across the Migration 0090 Phase 4+5+6 retrospective, surfacing at varied catch-stages (post-Phase 5 review integration -x; Glokta P1 #1+2 on Samwise commit; Phase 4 cascade integration -x; Ripley sentinel trailing-1 cascade; pre-push race-tier production miss on `crud_platform_markets.py:318`; pre-push unit tier on `test_validate_schema_consistency.py` same-module-name shape). Codifies the 8-category audit-set enumeration that PM dispatch prompts MUST include at dispatch time — modified production code, callers, unit tests for modified module, integration tests, race-tier / e2e tests, operator runbooks + schema documentation, SQL literal strings + comments, docstrings + module-level constants. Broader-grep is a discovery backstop, not a substitute for explicit enumeration. Severity: HIGH (cascade-wave shape recurred 6 times in a single session; recovery cost ~5 hours session-time vs ~5 minutes per dispatch for upfront enumeration). Source memo: `memory/session_104_close_summary.md` § "Critical session moments" #3 + § "Pattern 91 evidence summary".
 - **Active-pattern count:** 93 → 94 active (96 numbered slots − 2 reserved: 51 + 85; counting active includes Pattern 96).
@@ -13658,7 +13661,7 @@ Pattern 91 V1.44 codified N=3 evidence (sessions 89-91). V1.45+ expands the evid
 
 ---
 
-## Pattern 92: 5-Axis Tier-Separation Test for Canonical-vs-Platform-vs-Domain-Spoke Schema Audits (ALWAYS Before Issuing Column-Level Duplication Verdicts)
+## Pattern 92: 6-Axis Tier-Separation Test for Canonical-vs-Platform-vs-Domain-Spoke Schema Audits (ALWAYS Before Issuing Column-Level Duplication Verdicts OR Migration / Rename / FK Retarget Verdicts Grounded in Live Schema Artifacts)
 
 **Severity:** HIGH — issuing a column-level duplication verdict on insufficient evidence cascades into wrong-shape cleanup decisions, wasted Builder cycles, and (in the worst case observed at session 94) destruction of canonical-tier capability that the original ADR explicitly anticipated. The recovery cost includes architectural re-think + multi-session forward-plan revisions + 4-agent council reconvened to debate the catch the original verdict produced. The upstream cost of Axis 0 (value-enum MCP probe) is one `mcp__postgres-dev__query` call — ~10 seconds.
 
@@ -13687,7 +13690,7 @@ A 30-second MCP probe at session 94 (`SELECT pg_get_constraintdef(oid) FROM pg_c
 
 > When auditing a **column-level duplication claim** or **cross-tier-confusion claim**, run **Axis 0 (value-enum MCP probe)** via `pg_get_constraintdef` BEFORE Axes 1-4 (table-level tier classification). If Axis 0 shows enum cardinality or fine-grained-value divergence OR maps to demonstrably different semantic surfaces (e.g., game-clock state vs market-relevance state), the duplication claim is structurally suspect — escalate to read-side production-code grep before issuing verdict. The 4-axis table-level test continues to apply for table-vs-table tier-classification claims unchanged; Axis 0 fires only when the verdict involves "column X duplicates column Y" or "enum X subsumes enum Y."
 
-### Canonical Shape (The 5 Axes)
+### Canonical Shape (The 6 Axes)
 
 **Axis 0 — Value-enum probe (NEW; fires BEFORE Axes 1-4 on column-level claims).**
 
@@ -13714,6 +13717,34 @@ If Axis 0 indicates divergence, the column-duplication verdict is **rejected at 
 2. **Augmentation density** — % of columns canonical vs platform-shape
 3. **Reuse universe** — multi-domain vs domain-specific
 4. **Lifecycle independence** — outlives platform vs bound to platform lifecycle
+
+**Axis 5 — Cross-environment verification (NEW in V1.47; fires alongside Axes 0-4 whenever the audit cites a live schema artifact — column existence, constraint name, enum value, FK polarity — that may differ across environments).**
+
+The question Axis 5 asks: *does the audit's premise hold in every environment a downstream consumer will execute against, or only in the one environment the auditor probed?*
+
+Schema state is **environment-conditional** in Precog: the dev database, the ephemeral CI test database (built by `alembic upgrade head` from migrations + fixtures), and prod-shape databases (test-DB-as-prod-snapshot bounces, soak-test DBs, the eventual production DB) diverge in subtle ways even when they share the same `alembic_version` head. Sources of divergence include: historical out-of-band manual fixes that exist in some envs but not others; constraint name suffixes (`markets_pkey` vs `markets_pkey1`) auto-assigned by Postgres at constraint-creation time and influenced by historical drop/recreate order; partition-side index name truncation (Pattern 88a); sequence ownership artifacts; and trigger-function bodies whose source text differs when an env was upgraded across a Pattern-95-sensitive whitespace boundary. A single-environment MCP probe (Axes 0-4 as currently authored) cannot detect these.
+
+**The question Axis 5 makes the audit answer:**
+
+1. **Which environments does the downstream consumer (migration, test, code path, runbook) run against?** Enumerate explicitly: dev DB, CI test DB, soak DBs, prod-shape snapshots, prod itself.
+2. **Has the audit's premise been MCP-verified against each enumerated environment, or only the auditor's local environment?**
+3. **If only one environment was probed: is the cited artifact known to be environment-stable** (e.g., column existence after an explicit migration; CHECK enumeration set by an explicit `ADD CONSTRAINT`) **or environment-conditional** (auto-named pkey suffix; sequence ownership; partition-side index name; trigger-function body whitespace)?
+
+If the artifact is environment-conditional and only one env was probed, the audit's verdict carries an unverified-cross-env premise and the audit must extend its probe before issuing the verdict OR explicitly scope the verdict to the probed environment ("this rename is valid in dev DB shape; test DB may have variant constraint names requiring a normalization pre-step").
+
+**Application example (Migration 0090 session 103 origin).** Migration 0090's Phase 4 audit MCP-probed the dev DB only and authored the rename matrix against `markets_pkey` (no trailing 1). On first real-world execution, Phase 6 hit `relation "markets_pkey" does not exist` against the test DB because the test DB carried the auto-numbered `markets_pkey1` form (8 other markets-table constraints in test DB also carried the trailing `1` suffix; dev DB carried it on the 8 constraints but NOT on the PK). The build spec's OQ-H1 question ("preserve trailing-1 names or normalize?") was originally adjudicated PRESERVE under Pattern 87 ("don't fix unrelated issues in the same slot"). Phase 6 demonstrated the issue WAS related — actively blocking the rename. The user re-adjudicated to NORMALIZE (B forward-only); Migration 0090 gained a Step 0 pre-step using DO/EXCEPTION blocks to idempotently normalize 9 trailing-1 names across `pg_constraint` + `pg_sequence`. A pre-existing Axis 5 firing would have either: (a) caught the cross-env divergence at audit time and authored the normalization pre-step into Phase 4 directly; or (b) explicitly scoped Migration 0090 to "dev-DB shape only; test DB requires separate pre-migration normalization" — both outcomes superior to mid-execution failure.
+
+**When Axis 5 matters most:**
+
+- **Migrations that touch auto-named PG objects** — pkey/uq constraint names, partition-side index names (Pattern 88a interaction), sequence names. Auto-named objects' names depend on creation order and historical drop/recreate cycles, which legitimately differ across envs.
+- **Audits citing constraint definitions, enum values, or column existence to ground a rename / drop / FK retarget verdict.** The verdict's correctness depends on the cited artifact being present in every env the migration will execute against, not just the auditor's env.
+- **Trigger functions where Pattern 95 (load-bearing whitespace) applies.** Two envs with the same `alembic_version` but upgraded across different points in history may have divergent `pg_get_functiondef` outputs.
+- **Any audit grounded in MCP probes during a multi-session migration arc** where the dev DB is locally upgraded ahead of test DB / soak / prod (the usual case for slot-shaped work).
+
+**When Axis 5 is satisfied without further probing:**
+
+- The artifact under audit is set by an explicit `ALTER TABLE ... ADD CONSTRAINT <name> ...` or `ALTER TABLE ... ADD COLUMN <name>` with deterministic name and definition in a migration that has merged. The name + definition are environment-stable by construction.
+- The audit's verdict is explicitly scoped to a single environment ("dev-DB shape only — test DB requires separate verification before Phase N").
 
 ### Concrete Failure Mode (Session 94 D2 Duplicate Verdict)
 
@@ -13744,33 +13775,40 @@ The 5-axis test upgrade adds Axis 0 specifically to catch this failure mode. Per
 3. **Cross-check cardinality + value sets.** If cardinality differs or value sets are not subsets of each other, escalate to step 4.
 4. **Production-code grep on the divergent values.** For each value present in one column's enum but absent from the other's, grep `src/` for reads on that value. If any reader exists, the columns serve different semantic surfaces — verdict is structurally suspect.
 5. **Re-read the canonical ADR section for the tier under audit.** If you (the agent) previously co-authored prose about the columns, retrieve that prose verbatim. Decay-vector: agents forget their own co-authored framings on long time horizons.
-6. **Issue verdict only if Axes 0 + 1-4 all agree.** Otherwise, escalate to council adjudication or PM-side premise verification.
+6. **Run Axis 5 (cross-environment verification).** Enumerate the environments downstream consumers will execute against (dev / CI test / soak / prod). If the audit cites environment-conditional artifacts (auto-named PG objects, partition-side index names, trigger-function bodies under Pattern 95 whitespace sensitivity), MCP-probe each enumerated environment OR explicitly scope the verdict to the single probed environment.
+7. **Issue verdict only if Axes 0 + 1-4 + 5 all agree.** Otherwise, escalate to council adjudication or PM-side premise verification.
 
 ### Anti-Recurrence Test
 
-Before any council/agent column-level duplication verdict:
+Before any council/agent column-level duplication verdict OR migration / rename / FK retarget verdict citing live schema artifacts:
 
 1. Was Axis 0 (value-enum MCP probe) executed? **If no:** verdict is structurally invalid; redraft after probe.
 2. Did the verdict-author re-read the canonical ADR section for the tier under audit? **If no:** retrieve and re-read; redraft if the ADR contradicts the verdict.
 3. Did the verdict-author run production-code grep on the divergent values? **If no:** run grep; if any reader exists for divergent values, escalate.
 4. Is the verdict written as "X duplicates Y" (column-level) but the test mechanics applied are table-level only? **If yes:** wrong instrument; redraft after applying Axis 0.
+5. **Was Axis 5 (cross-environment verification) executed against each environment a downstream consumer will run against, OR was the verdict explicitly scoped to a single probed environment?** **If neither:** verdict carries an unverified-cross-env premise; redraft after multi-env probe or explicit scope statement.
 
-If any of (1)-(4) fails, verdict is wrong-shape; redraft.
+If any of (1)-(5) fails, verdict is wrong-shape; redraft.
 
 ### Cross-References
 
-- Pattern 91 (MCP-First Premise Verification for Authoring Artifacts) — sister discipline at PM-side; Pattern 92 covers agent-side architect-frame mechanics.
-- Pattern 73 (SSOT) — value enumerations live in CHECK constraints + Python constants tuples; verdict-author MUST cite the canonical home.
+- Pattern 91 (MCP-First Premise Verification for Authoring Artifacts) — sister discipline at PM-side; Pattern 92 covers agent-side architect-frame mechanics. Pattern 91 is authoring-time discipline against live state; Axis 5 is audit-time discipline against state across multiple envs.
+- Pattern 73 (SSOT) — value enumerations live in CHECK constraints + Python constants tuples; verdict-author MUST cite the canonical home. For Axis 5: the per-env live schema is the canonical truth for that env, and an audit citing one env's state cannot SSOT-claim for another env without explicit verification.
+- Pattern 87 (Append-Only Migration Files) — paired with Axis 5: the migration text is frozen at merge time, but per-env state can drift via out-of-band fixes; Axis 5 reconciles "what the migration says happened" with "what the env actually shows" across env boundaries.
+- Pattern 88a (Partition-Side Index Name Truncation) — concrete instance of an environment-conditional artifact: partition index names get truncated by PG's NAMEDATALEN limit with numeric-suffix disambiguation that is order-dependent across envs. Audits citing partition index names by `indexname` (not `indexdef`) MUST fire Axis 5.
+- Pattern 95 (Migration Trigger-Function Whitespace Round-Trip Fragility) — concrete instance of an environment-conditional artifact: the `pg_get_functiondef` output of a trigger body is whitespace-sensitive and can diverge across envs upgraded at different historical points.
+- Pattern 78 (Two-Gate Audit Discipline) — adjacent rule for retrospective claude-review audits. Gate A (bug presence) + Gate B (fix validity) implicitly assume single-env verification; Axis 5 generalizes both gates to multi-env where the audit grounds in environment-conditional artifacts.
 - ADR-118 V2.47-D (R6 codification) — the load-bearing four-distinct-concerns model that emerged from Galadriel's session 98 recalibration of the session 94 D2 verdict.
 - Galadriel session 98 memo § 6.2 + § 7 (`memory/design_review_lifecycle_phase_galadriel_memo.md`) — full TIER-CONFUSION FABRICATION calibration including the 4 root-cause analysis.
 - ADR-118 V2.39 § "three-distinct-concerns" — the prose Galadriel co-authored at session 73 and forgot at session 94; this Pattern's anti-recurrence test mandates retrieving authored prose before issuing column-level verdicts.
 
 ### Source
 
-- `memory/design_review_lifecycle_phase_galadriel_memo.md` § 6.2 (5-axis upgrade origin + 4 root-cause analysis) + § 7 (Pattern 92 candidate description).
+- `memory/design_review_lifecycle_phase_galadriel_memo.md` § 6.2 (5-axis V1.45 upgrade origin + 4 root-cause analysis) + § 7 (Pattern 92 candidate description).
 - `memory/design_review_lifecycle_phase_synthesis.md` (council adjudication of R6 = R3 + R5' + R8 as the recovery from D2).
 - ADR-118 V2.39 Items 2/3 (the three-distinct-concerns model that the session 94 D2 verdict structurally contradicted).
 - ADR-118 V2.47-D (R6 codification — the architecturally-complete answer the 5-axis test would have produced at session 94 if it had been the active instrument).
+- **Axis 5 origin (V1.47 upgrade):** Migration 0090 multi-session arc (sessions 101-104), specifically `memory/session_103_close_summary.md` § 4 ("Cross-env DB drift surfaced on first real-world Migration 0090 execution") + `memory/build_spec_0090_platform_rename_pm_memo.md` OQ-H1 PRESERVE→NORMALIZE flip. Phase 4 MCP-probed the dev DB only; Phase 6 hit `relation "markets_pkey" does not exist` against the test DB (which carried `markets_pkey1` auto-named form). The cross-env divergence had been latent across the entire multi-session audit. Session 105 codified the axis as V1.47 amendment per Glokta REQUEST-CHANGES on initial V1.46 attempt (corrected version bump avoids Pattern 96's V1.46 slot; corrected title parenthetical scope to cover migration/rename/FK retarget verdicts).
 
 ---
 
