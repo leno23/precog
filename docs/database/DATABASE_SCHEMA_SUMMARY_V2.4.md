@@ -1,6 +1,50 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0090, verified=2026-05-13, tables=63, migrations=86, last_changelog_migration=0090 -->
+<!-- FRESHNESS: alembic_head=0091, verified=2026-05-14, tables=64, migrations=87, last_changelog_migration=0091 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0090 -> 0091 (V2.4 amended-in-place, 2026-05-14):
+
+Migration 0091 (PR #1195, session 108) -- Cohort 5+ Slot B canonical-event
+matcher infrastructure.  Launches Cohort 5+ proper by landing the three
+schema mutations the canonical-event matcher needs to operate.  Slot A
+was retroactively claimed by Migration 0090 (platform-prefix rename);
+Slot B is THIS migration plus the matcher module that ships alongside
+it (src/precog/matching/canonical_event_matcher.py, ~1535 LoC).
+
+Schema mutations (ordered transaction):
+
+  1. CREATE TABLE canonical_event_match_log (13 columns + 4 FKs + 6-value
+     action CHECK ('create', 'retire', 'update_phase', 'review_approve',
+     'review_reject', 'quarantine') + 3 indexes).  5th audit ledger;
+     mirrors slot 0073 canonical_match_log shape but event-tier.
+     Append-only via application discipline (slot 0073 precedent);
+     trigger-enforced append-only deferred post-soak.
+  2. ALTER TABLE canonical_events ADD COLUMN created_by VARCHAR(64).
+     Miles P41-cap resolution from session-92 4-agent council; provenance
+     for every canonical_events row identifying the writer (matcher
+     identity string, e.g., "matcher:slot-B:v1").
+  3. INSERT INTO match_algorithm registering cohort5_event_matcher_v1
+     (id=2 post-seed; manual_v1 retains id=1).
+
+Authority chain: session-92 4-agent design council (Galadriel + Holden +
+Miles + Uhura) -- canonical at memory/build_spec_slot_a_matcher_pm_memo.md;
+session-107 rebase addendum at memory/build_spec_slot_b_matcher_addendum_
+session_107.md (covers platform-prefix rename rebase + lifecycle_phase
+5-value collapse + alembic head advance 0084 -> 0090).
+
+S82 verdict at design: INHERITED + addendum (3rd S82-INHERITED outcome;
+calibration 17 SKIPs / 4 FIREs / 3 INHERITED post-session-108 forecast).
+
+Matcher module ships behind feature flag
+features.canonical_event_matcher.enabled = false in system.yaml.  Flag
+flip queued for session 109+ after soak window.  PR #1195 (PR-C SAVEPOINT
+hardening, session 108) is the architectural follow-up that must merge
+before the flag flips -- closes 4 P1 findings from session-107 three-
+reviewer convergent finding via SAVEPOINT-per-candidate refactor.
+
+Table count: 63 -> 64 (canonical_event_match_log added).
+Migration count: 86 -> 87 (added 0091).
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0089 -> 0090 (V2.4 amended-in-place, 2026-05-13):
 
@@ -1353,15 +1397,18 @@ by name in a SQL comment; CRUD modules import + USE the constants in real-guard
 
 ## Migration Catalog
 
-80 migration files cover slots 0001-0084 (slots 0029, 0081, 0083 intentionally
+87 migration files cover slots 0001-0091 (slots 0029, 0081, 0083 intentionally
 skipped — `portfolio_fills` design abandoned pre-baseline for 0029; slot 0081
 retired into 0080 per V2.43 Item 2 / Q5 user adjudication; slot 0083 deferred
-to Cohort 5+ per V2.45 Item 1 / issue #1141).  Chain head is 0084 via the
+to Cohort 5+ per V2.45 Item 1 / issue #1141).  Chain head is 0091 via the
 sequence `0073 -> 0075 -> 0074 -> 0076 -> 0077 -> 0078 -> 0079 -> 0080 ->
-0082 -> 0084` — non-monotonic on the 0073-0074 hop AND on the 0080-0082 hop
-(0081 hole) AND on the 0082-0084 hop (0083 hole); monotonic on 0074 -> 0080
-and 0082 -> 0084.  Cohort 4 additions this revision (full pre-Cohort-4
-catalog at V2.3 § Migration Catalog):
+0082 -> 0084 -> 0088 -> 0089 -> 0090 -> 0091` — non-monotonic on the 0073-0074
+hop AND on the 0080-0082 hop (0081 hole) AND on the 0082-0084 hop (0083 hole);
+monotonic on 0074 -> 0080 and 0082 -> 0084 and 0084 -> 0091.  Cohort 4
+additions this revision (full pre-Cohort-4 catalog at V2.3 § Migration Catalog;
+Cohort 5+ additions 0088-0091 are detailed in the changelog stanzas at the
+top of this document — catalog-table backfill for 0088-0090 deferred to a
+follow-up bump):
 
 | Migration | Description | Impact |
 |-----------|-------------|--------|
@@ -1376,7 +1423,8 @@ catalog at V2.3 § Migration Catalog):
 | **0079** | **Cohort 4 slot 0079 — `canonical_event_phase_log` audit ledger + auto-population trigger** | New table + 3 indexes + 2 CHECKs + 1 trigger function + 1 trigger; append-only via application discipline (mirrors slot 0073) |
 | **0080** | **Cohort 4 slot 0080 — combined `game_states` + `games` `canonical_event_id` nullable FKs (Pattern 84 by analogy)** | 2 ALTER TABLE rounds (each: ADD COLUMN + NOT VALID + VALIDATE + INDEX) + 2 indexes; first-ever Pattern 84 by-analogy use for FK on populated tables; slot 0081 retired into 0080 per V2.43 Item 2 (permanent slot 0081 hole) |
 | **0082** | **Cohort 4 slot 0082 — `temporal_alignment.canonical_event_id` nullable FK (Pattern 84 2nd by-analogy use)** | 1 ALTER TABLE round + 1 index; N=2 threshold reached → Pattern 84 promoted to V1.42 in PR #1138 |
-| **0084** | **Cohort 4 close-out slot 0084 — CANONICAL LAYER REDESIGN (V2.45 Items 1/4/6/8); chain head** | DROP COLUMN canonical_observations.payload (Item 4); RENAME canonical_observations.canonical_event_id → canonical_primary_event_id (Item 8); DROP TABLE temporal_alignment + CREATE TABLE with new pure-linkage shape (Item 6); CREATE TABLE canonical_observation_event_links (Item 8); slot 0083 deferred to Cohort 5+ (Item 1, permanent slot 0083 hole) |
+| **0084** | **Cohort 4 close-out slot 0084 — CANONICAL LAYER REDESIGN (V2.45 Items 1/4/6/8)** | DROP COLUMN canonical_observations.payload (Item 4); RENAME canonical_observations.canonical_event_id → canonical_primary_event_id (Item 8); DROP TABLE temporal_alignment + CREATE TABLE with new pure-linkage shape (Item 6); CREATE TABLE canonical_observation_event_links (Item 8); slot 0083 deferred to Cohort 5+ (Item 1, permanent slot 0083 hole) |
+| **0091** | **Cohort 5+ Slot B — canonical_event_match_log audit ledger + canonical_events.created_by provenance column + match_algorithm matcher seed; chain head** | CREATE TABLE canonical_event_match_log (5th audit ledger; mirrors slot 0073 shape, event-tier; 13 columns + 4 FKs + 6-value action CHECK + 3 indexes); ADD COLUMN canonical_events.created_by VARCHAR(64) (Miles P41 resolution); INSERT new match_algorithm row cohort5_event_matcher_v1 (id=2). Matcher module ships in parallel behind feature flag; PR #1195 (PR-C SAVEPOINT hardening) is the architectural follow-up before flag flip. Catalog rows for 0088/0089/0090 deferred to a follow-up bump |
 
 All migrations have `downgrade()` functions.  Slot 0029 + slot 0081 + slot
 0083 intentionally skipped (portfolio_fills eliminated for 0029; slot 0081

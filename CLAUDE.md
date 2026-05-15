@@ -207,7 +207,7 @@ precog-repo/
 - `docs/guides/POSITION_MANAGER_USER_GUIDE_V1.1.md`
 
 **Database & API:**
-- `docs/database/DATABASE_SCHEMA_SUMMARY_V2.4.md` - Complete schema (supersedes V2.1+; current FRESHNESS marker `alembic_head=0090` post-Migration 0090 platform-prefix rename; canonical demonstration of Pattern 86 freshness markers — earlier versions retained for changelog history)
+- `docs/database/DATABASE_SCHEMA_SUMMARY_V2.4.md` - Complete schema (supersedes V2.1+; FRESHNESS marker `alembic_head=0091` post-Migration 0091 Cohort 5+ Slot B — `canonical_event_match_log` audit ledger + `canonical_events.created_by` provenance column + `match_algorithm` matcher seed row; canonical demonstration of Pattern 86 freshness markers — earlier versions retained for changelog history)
 - `docs/api-integration/API_INTEGRATION_GUIDE_V2.0.md`
 - `docs/api-integration/KALSHI_DECIMAL_PRICING_CHEAT_SHEET_V1.0.md` - CRITICAL reference
 
