@@ -76,6 +76,7 @@ def register_commands() -> None:
     from precog.cli import db as db_cmd
     from precog.cli import espn as espn_cmd
     from precog.cli import kalshi as kalshi_cmd
+    from precog.cli import matcher as matcher_cmd
     from precog.cli import scheduler as scheduler_cmd
     from precog.cli import system as system_cmd
 
@@ -85,6 +86,11 @@ def register_commands() -> None:
     app.add_typer(data_cmd.app, name="data", help="Data seeding and management")
     app.add_typer(db_cmd.app, name="db", help="Database operations")
     app.add_typer(backup_cmd.app, name="backup", help="Database backup and restore")
+    app.add_typer(
+        matcher_cmd.app,
+        name="matcher",
+        help="Canonical-event matcher operations (Cohort 5+ Slot B)",
+    )
     app.add_typer(scheduler_cmd.app, name="scheduler", help="Service management")
     app.add_typer(config_cmd.app, name="config", help="Configuration management")
     app.add_typer(system_cmd.app, name="system", help="System utilities")

@@ -84,6 +84,13 @@ SERVICE_TO_COMPONENT: dict[str, str] = {
     KalshiWebSocketHandler.SERVICE_KEY: KalshiWebSocketHandler.HEALTH_COMPONENT,
     TemporalAlignmentWriter.SERVICE_KEY: TemporalAlignmentWriter.HEALTH_COMPONENT,
     CanonicalObservationsWriter.SERVICE_KEY: CanonicalObservationsWriter.HEALTH_COMPONENT,
+    # canonical_event_matcher (Cohort 5+ Slot B) -- hardcoded strings rather
+    # than class-var pointers to avoid circular import: matcher module imports
+    # from precog.schedulers.base_poller which triggers schedulers package init
+    # -> service_supervisor module init.  Pattern 73 SSOT discipline preserved
+    # via test_service_supervisor_canonical_event_matcher_integration which
+    # imports the matcher class AT TEST TIME and asserts string parity.
+    "canonical_event_matcher": "canonical_event_matcher",
 }
 COMPONENT_TO_BREAKER_TYPE: dict[str, str] = {
     ESPNGamePoller.HEALTH_COMPONENT: ESPNGamePoller.BREAKER_TYPE,
@@ -91,6 +98,10 @@ COMPONENT_TO_BREAKER_TYPE: dict[str, str] = {
     KalshiWebSocketHandler.HEALTH_COMPONENT: KalshiWebSocketHandler.BREAKER_TYPE,
     TemporalAlignmentWriter.HEALTH_COMPONENT: TemporalAlignmentWriter.BREAKER_TYPE,
     CanonicalObservationsWriter.HEALTH_COMPONENT: CanonicalObservationsWriter.BREAKER_TYPE,
+    # canonical_event_matcher breaker_type='data_stale' (Cohort 5+ Slot B);
+    # parallel to canonical_observations_writer + temporal_alignment_writer.
+    # See SERVICE_TO_COMPONENT comment above for circular-import rationale.
+    "canonical_event_matcher": "data_stale",
 }
 
 
@@ -1309,6 +1320,41 @@ def _create_canonical_observations_writer(
     )
 
 
+def _create_canonical_event_matcher(
+    **_kwargs: Any,
+) -> EventLoopService:
+    """Factory for Canonical Event Matcher (Cohort 5+ Slot B).
+
+    Per session-92 4-agent Cohort 5+ Slot B design council + parent
+    spec ``memory/build_spec_slot_a_matcher_pm_memo.md`` § File 6 +
+    session-107 rebase addendum.
+
+    Unlike the canonical_observations_writer (which ships as a
+    no-op skeleton), the matcher ships with FULL functional
+    implementation -- creating canonical_events + canonical_event_links
+    + canonical_event_match_log rows with V2.44 atomicity contract.
+
+    Feature-flag-gated activation: ``features.canonical_event_matcher.enabled``
+    in system.yaml defaults to ``false`` until session 108+ soak
+    window opens.  When ``false``, the service registration still
+    happens (so the supervisor's health-check loop has uniform
+    coverage) but the service config's ``enabled=false`` keeps the
+    matcher from being instantiated by ``create_services``.  See
+    ``docs/operations/canonical_event_matcher_runbook.md`` for the
+    activation procedure.
+
+    Import deferred to function body to avoid circular import
+    (matcher module imports from precog.schedulers.base_poller which
+    triggers precog.schedulers package init -> service_supervisor
+    module init).
+    """
+    from precog.matching.canonical_event_matcher import (
+        create_canonical_event_matcher as _create,
+    )
+
+    return cast("EventLoopService", _create())
+
+
 # Registry mapping service names to factory callables.
 # To add a new service (e.g., Polymarket):
 #   1. Add SERVICE_KEY/HEALTH_COMPONENT/BREAKER_TYPE class vars to the poller
@@ -1321,6 +1367,7 @@ SERVICE_FACTORIES: dict[str, Callable[..., EventLoopService | None]] = {
     "kalshi_ws": _create_kalshi_ws,
     "temporal_alignment": _create_temporal_alignment,
     "canonical_observations_writer": _create_canonical_observations_writer,
+    "canonical_event_matcher": _create_canonical_event_matcher,
 }
 
 

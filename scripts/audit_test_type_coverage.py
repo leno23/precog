@@ -131,6 +131,11 @@ MODULE_TIERS = {
     "database/crud_canonical_event_phase_log": "experimental",
     # Cleanup epic Slot 4 (Migration 0088) — canonical_market_phase_log audit ledger CRUD (Epic #1155)
     "database/crud_canonical_market_phase_log": "experimental",
+    # Cohort 5+ Slot B (Migration 0091) — canonical-event matcher (#1184 Item 4)
+    # Ships behind feature flag false; full 8-type coverage tracked in PR-C follow-up
+    "database/crud_canonical_event_match_log": "experimental",
+    "matching/canonical_event_matcher": "experimental",
+    "cli/matcher": "experimental",
     "database/constants": "experimental",
     "database/seeding/seeding_manager": "business",
     "database/seeding/historical_elo_loader": "business",

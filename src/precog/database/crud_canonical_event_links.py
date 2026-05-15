@@ -23,16 +23,43 @@ Pattern 14 5-step bundle status:
     ``crud_canonical_market_links.py``).  See that module's docstring for
     the full bundle status; this module's status mirrors it.
 
-Phase 1 surface (deliberately minimal — Glokta gap awareness):
-    Read + retire helpers only — there is intentionally NO ``create_link()``
-    helper in slot 0072.  Per build spec § 8 step 3b: the matcher (Cohort
-    5+) writes through the two-table-write CRUD wrapper that lives with
-    slot 0073's ``canonical_match_log`` (Miles consideration #3 — atomic
-    INSERT into both link table AND log table in a single ``BEGIN ...
-    COMMIT`` transaction).  Adding a thin ``create_link()`` here would
+Phase 1 surface (slot 0072 -- deliberately minimal):
+    Read + retire helpers only.
+
+Cohort 5+ Slot B surface (Migration 0091 + canonical_event_matcher):
+    Adds ``create_link()`` + ``create_link_in_cursor()`` for the matcher's
+    atomic transaction-spanning two-table-write (canonical_events INSERT
+    + canonical_event_links INSERT + canonical_event_match_log INSERT
+    in a single transaction per ADR-118 V2.44 atomicity contract).
+
+    Slot 0072's deliberate absence of ``create_link()`` (per build spec
+    § 8 step 3b at the time: "adding a thin create_link() here would
     tempt callers into single-table writes that bypass the audit-log
-    invariant.  Slot 0073 ships the wrapper; until then, Phase 1 has no
-    live writers.
+    invariant") is RESOLVED by slot B's pairing of ``create_link()``
+    with the matcher's atomic transaction discipline -- the matcher
+    NEVER calls ``create_link()`` without also calling
+    ``crud_canonical_event_match_log.append_event_match_log_row_in_cursor()``
+    in the same transaction.  Direct callers of ``create_link()``
+    outside the matcher are policy-discouraged (see § 6 V2.44 atomicity
+    contract below).
+
+V2.44 atomicity contract (parent spec § Per-Q Adjudications Q4 +
+session-92 council convergence):
+
+    The matcher's steady-state write path is a single transaction:
+
+        1. INSERT canonical_events (existing CRUD)
+        2. INSERT canonical_event_links via ``create_link_in_cursor()`` (NEW)
+        3. INSERT canonical_event_phase_log (auto-trigger from step 1)
+        4. INSERT canonical_event_match_log via
+           ``append_event_match_log_row_in_cursor()`` (slot B CRUD)
+        5. UPDATE games.canonical_event_id (if applicable)
+        6. UPDATE game_states.canonical_event_id (if applicable)
+        7. COMMIT (atomically)
+
+    Either ALL writes commit or ALL roll back; no partial-state
+    failures.  This is the integrity-defining contract that the
+    matcher's audit ledger is built on.
 
 UPDATE coverage (Cohort 3 deliberate gap):
     Mirrors ``crud_canonical_market_links.py`` discipline — only
@@ -57,12 +84,18 @@ Reference:
 """
 
 import logging
+from decimal import Decimal
 from typing import Any, cast
 
 from .connection import fetch_all, fetch_one, get_cursor
-from .constants import LINK_STATE_VALUES  # noqa: F401  -- import to assert vocabulary home
+from .constants import DECIDED_BY_PREFIXES, LINK_STATE_VALUES
 
 logger = logging.getLogger(__name__)
+
+
+# Maximum allowed length for ``decided_by`` matches the DDL column boundary
+# (``VARCHAR(64)``).  Mirrors slot 0073's ``_DECIDED_BY_MAX_LENGTH`` shape.
+_DECIDED_BY_MAX_LENGTH = 64
 
 
 # =============================================================================
@@ -209,6 +242,234 @@ def list_links_for_canonical_event(
         ORDER BY decided_at DESC
     """
     return fetch_all(query, (canonical_event_id,))
+
+
+# =============================================================================
+# CANONICAL EVENT LINKS — CREATE OPERATION (Slot B, Cohort 5+)
+# =============================================================================
+
+
+def create_link(
+    *,
+    canonical_event_id: int,
+    platform_event_id: int,
+    confidence: Decimal,
+    algorithm_id: int,
+    decided_by: str,
+    link_state: str = "active",
+) -> int:
+    """Create a new canonical_event_links row.  Slot B (Cohort 5+) write path.
+
+    Cohort 5+ Slot B (Migration 0091 + canonical_event_matcher) writer
+    helper.  The matcher's atomic transaction uses
+    ``create_link_in_cursor()`` (cursor-aware sibling); standalone
+    callers (operator-driven fixture flows; tests) use this function.
+
+    Enforces ``uq_canonical_event_links_active`` EXCLUDE constraint at
+    INSERT time (one ``active`` link per ``platform_event_id``).
+    Callers MUST handle ``psycopg2.errors.UniqueViolation`` /
+    ``ExclusionViolation`` and decide whether to retire the prior link
+    first (matcher's typical flow: retire-then-insert in the same
+    transaction).
+
+    Args:
+        canonical_event_id: BIGSERIAL FK into ``canonical_events.id``.
+            NOT NULL.  Caller must have already INSERTed the
+            canonical_events row.
+        platform_event_id: INTEGER FK into ``platform_events.id``.
+            NOT NULL.
+        confidence: NUMERIC(4,3) in [0, 1].  Decimal-only per
+            CLAUDE.md Critical Pattern #1.  Algorithm-derived match
+            confidence; operator overrides typically use Decimal('1.0').
+        algorithm_id: BIGINT FK into ``match_algorithm.id``.  NOT
+            NULL.  Matcher writes use ``cohort5_event_matcher_v1.id``
+            (resolved via
+            ``crud_canonical_event_match_log.get_cohort5_event_matcher_algorithm_id()``);
+            operator overrides use ``manual_v1.id`` (slot 0073
+            ``get_manual_v1_algorithm_id()``).
+        decided_by: VARCHAR(64) NOT NULL actor attribution.  MUST
+            start with one of ``DECIDED_BY_PREFIXES``; MUST be <= 64
+            chars.
+        link_state: VARCHAR(16) state; defaults to ``'active'``.
+            MUST be in ``LINK_STATE_VALUES``.  Direct caller-supplied
+            non-active states (``'retired'`` / ``'quarantined'``) are
+            unusual but supported for the matcher's restore-and-
+            quarantine flow.
+
+    Returns:
+        The BIGSERIAL ``id`` of the newly-inserted link row.
+
+    Raises:
+        ValueError: validation failure (decided_by / link_state /
+            confidence domain errors).
+        TypeError: confidence is non-Decimal (CLAUDE.md Critical
+            Pattern #1 enforcement).
+        psycopg2.errors.ExclusionViolation: ``uq_canonical_event_links_active``
+            EXCLUDE fires -- another active link already exists for
+            this ``platform_event_id``.  Caller must retire the prior
+            link first.
+        psycopg2.errors.ForeignKeyViolation: canonical_event_id /
+            platform_event_id / algorithm_id references a non-existent
+            row.
+        psycopg2.errors.CheckViolation: confidence outside [0, 1] OR
+            link_state outside the canonical enum (Pattern 73 SSOT
+            failure mode if CRUD validation drifted from DDL CHECK).
+
+    Example:
+        >>> link_id = create_link(
+        ...     canonical_event_id=42,
+        ...     platform_event_id=89,
+        ...     confidence=Decimal("0.987"),
+        ...     algorithm_id=2,  # cohort5_event_matcher_v1
+        ...     decided_by="service:matcher:slot-B:v1",
+        ... )
+
+    Educational Note:
+        For the matcher's atomic transaction-spanning path (V2.44
+        atomicity contract), use ``create_link_in_cursor()`` -- it
+        does NOT commit, allowing the caller to bundle the link INSERT
+        with canonical_events INSERT + canonical_event_match_log
+        INSERT in a single transaction.
+
+    Reference:
+        - Migration 0072 (table DDL + EXCLUDE constraint)
+        - Migration 0091 (Slot B matcher infrastructure)
+        - ``create_link_in_cursor()`` (cursor-aware sibling for V2.44
+          atomic flows)
+        - Slot 0073 + 0074 link-table CRUD discipline precedent
+    """
+    _validate_create_link_args(decided_by=decided_by, link_state=link_state, confidence=confidence)
+    with get_cursor(commit=True) as cur:
+        return create_link_in_cursor(
+            cur,
+            canonical_event_id=canonical_event_id,
+            platform_event_id=platform_event_id,
+            confidence=confidence,
+            algorithm_id=algorithm_id,
+            decided_by=decided_by,
+            link_state=link_state,
+        )
+
+
+def _validate_create_link_args(
+    *,
+    decided_by: str,
+    link_state: str,
+    confidence: Decimal,
+) -> None:
+    """Pattern 73 SSOT + boundary + Decimal-Pattern-#1 validation for create_link args.
+
+    Mirrors slot 0073's _validate_append_match_log_args shape adapted
+    for the link-INSERT path.  Extracted so both ``create_link``
+    (validates BEFORE opening its own cursor) AND
+    ``create_link_in_cursor`` (validates as defense-in-depth) share
+    the same canonical validation logic.
+    """
+    # link_state must be in canonical 3-value vocabulary.  Pattern 73 SSOT.
+    if link_state not in LINK_STATE_VALUES:
+        raise ValueError(
+            f"link_state {link_state!r} not in canonical LINK_STATE_VALUES "
+            f"{LINK_STATE_VALUES!r}; pattern 73 SSOT vocabulary violation"
+        )
+
+    # decided_by prefix discipline (slot 0073 inheritance).
+    if not any(decided_by.startswith(p) for p in DECIDED_BY_PREFIXES):
+        raise ValueError(
+            f"decided_by {decided_by!r} must start with one of "
+            f"DECIDED_BY_PREFIXES {DECIDED_BY_PREFIXES!r}; "
+            "pattern 73 SSOT vocabulary violation"
+        )
+
+    # decided_by length boundary per slot 0073 #1085 finding #3 inheritance.
+    if len(decided_by) > _DECIDED_BY_MAX_LENGTH:
+        raise ValueError(
+            f"decided_by length {len(decided_by)} exceeds "
+            f"VARCHAR({_DECIDED_BY_MAX_LENGTH}) column boundary; got {decided_by!r}"
+        )
+
+    # confidence bound check + Decimal-Pattern-#1 enforcement.
+    # Unlike canonical_event_match_log.confidence (NULLABLE), the link
+    # table's confidence is NOT NULL -- pass-through required.
+    if not isinstance(confidence, Decimal):
+        raise TypeError(
+            f"confidence must be Decimal per CLAUDE.md Critical Pattern #1 "
+            f"(no float in probability paths); got "
+            f"{type(confidence).__name__}={confidence!r}"
+        )
+    if confidence.is_nan():
+        raise ValueError(f"confidence must not be Decimal('NaN'); got {confidence!r}")
+    if confidence < Decimal("0") or confidence > Decimal("1"):
+        raise ValueError(f"confidence must be in [0, 1]; got {confidence!r}")
+
+
+def create_link_in_cursor(
+    cur: Any,
+    *,
+    canonical_event_id: int,
+    platform_event_id: int,
+    confidence: Decimal,
+    algorithm_id: int,
+    decided_by: str,
+    link_state: str = "active",
+) -> int:
+    """Cursor-aware variant of ``create_link`` -- caller owns the transaction.
+
+    Used by the canonical-event matcher (Cohort 5+ Slot B) inside its
+    atomic two-table-write transaction (V2.44 atomicity contract):
+
+        BEGIN;
+          INSERT INTO canonical_events ... RETURNING id;
+          create_link_in_cursor(cur, canonical_event_id=<just-inserted>, ...);
+          append_event_match_log_row_in_cursor(cur, action='create', ...);
+          UPDATE games SET canonical_event_id = ... WHERE id = <game_id>;
+          UPDATE game_states SET canonical_event_id = ... WHERE game_id = <game_id>;
+        COMMIT;
+
+    Performs identical validation to ``create_link()`` via
+    ``_validate_create_link_args``; does NOT open a cursor and does
+    NOT commit.
+
+    Args:
+        cur: psycopg2 cursor under an active transaction (the caller's
+            ``with get_cursor(commit=True)`` block).
+        (remaining args identical to ``create_link``)
+
+    Returns:
+        The BIGSERIAL ``id`` of the newly-inserted link row.
+
+    Raises:
+        ValueError / TypeError: validation failures identical to
+            ``create_link``.
+        psycopg2.errors.ExclusionViolation /
+            psycopg2.errors.ForeignKeyViolation: SQL-layer integrity
+            failures.
+    """
+    # Defense-in-depth validation; mirrors slot 0073 cursor-aware variant.
+    _validate_create_link_args(decided_by=decided_by, link_state=link_state, confidence=confidence)
+
+    query = """
+        INSERT INTO canonical_event_links (
+            canonical_event_id, platform_event_id, link_state,
+            confidence, algorithm_id, decided_by
+        ) VALUES (
+            %s, %s, %s,
+            %s, %s, %s
+        )
+        RETURNING id
+    """
+    cur.execute(
+        query,
+        (
+            canonical_event_id,
+            platform_event_id,
+            link_state,
+            confidence,
+            algorithm_id,
+            decided_by,
+        ),
+    )
+    row = cur.fetchone()
+    return cast("int", row["id"])
 
 
 # =============================================================================

@@ -523,6 +523,126 @@ binds to operator-runbook-investigation branches per Pattern 81 §
 """
 
 
+CANONICAL_EVENT_MATCH_LOG_ACTION_VALUES: Final[tuple[str, ...]] = (
+    "create",  # new canonical_events row + canonical_event_link created (matcher primary path)
+    "retire",  # existing canonical_event_link retired (matcher detected stale binding)
+    "update_phase",  # canonical_events.lifecycle_phase advanced (RESERVED: matcher does not advance phase in Slot B)
+    "review_approve",  # canonical_match_reviews row resolved to approved (operator-driven)
+    "review_reject",  # canonical_match_reviews row resolved to rejected (operator-driven)
+    "quarantine",  # canonical_event_link transitioned to quarantined (matcher detected uncertainty)
+)
+"""Canonical 6-value vocabulary for ``canonical_event_match_log.action``.
+
+Authoritative per ADR-118 V2.44 atomicity contract + session-92 4-agent
+Cohort 5+ Slot B design council (Galadriel + Holden + Miles + Uhura) +
+PM-composed build spec at ``memory/build_spec_slot_a_matcher_pm_memo.md``
++ session-107 rebase addendum (slot A -> slot B renumber, Migration
+0085 -> 0091).
+
+Migration 0091 enforces this list at the DDL layer via an inline CHECK
+constraint on ``canonical_event_match_log.action``.  Adding a new action
+requires lockstep update of both this constant AND a migration ALTERing
+the CHECK constraint -- drift between Python and DDL would produce
+silent audit-ledger bugs (a CRUD-side write of an unknown action would
+be rejected by DDL but pass Python validation, or vice versa).
+
+Action semantics (parent spec § File 1):
+    ``create``         -- new canonical_events row + canonical_event_link
+                          created in a single transaction.  Matcher's
+                          primary path; the matcher writes ~99% of
+                          'create' rows; operator-CLI backfill writes
+                          the remaining ~1%.
+    ``retire``         -- existing canonical_event_link transitioned
+                          to retired (matcher detected stale binding;
+                          e.g., platform_event re-keyed and the prior
+                          canonical_event no longer represents the
+                          underlying real-world event).
+    ``update_phase``   -- canonical_events.lifecycle_phase advanced.
+                          RESERVED for downstream lifecycle slot;
+                          matcher Slot B does NOT advance phase.  This
+                          enum value exists in the vocab so future-
+                          cohort writers don't need an ALTER CHECK.
+    ``review_approve`` -- canonical_match_reviews row resolved to
+                          approved (operator-driven).
+    ``review_reject``  -- canonical_match_reviews row resolved to
+                          rejected (operator-driven).
+    ``quarantine``     -- canonical_event_link transitioned to
+                          quarantined (matcher detected uncertainty
+                          warranting human review).
+
+Per CLAUDE.md Critical Pattern #8 (Pattern 73 SSOT): the
+``crud_canonical_event_match_log.append_event_match_log_row()`` CRUD
+function uses this constant in real-guard ValueError-raising validation
+(slot 0073 #1085 finding #2 strengthening inheritance).
+
+Note: this is SLOT B's 6-value event-tier vocabulary; do not confuse
+with slot 0073's 7-value market-tier ``ACTION_VALUES`` (link / unlink /
+relink / quarantine / override / review_approve / review_reject).  The
+two vocabularies overlap on ``quarantine`` / ``review_approve`` /
+``review_reject`` but differ on the create/retire vs. link/unlink/relink
+shape -- event-tier semantics are coarser-grained because events have
+fewer state transitions than market links.
+
+Pattern 81 carve-out: this is intentionally NOT a lookup table.  The
+action set is closed (every value binds to matcher / operator code
+branches per Pattern 81 § "When NOT to Apply"); same carve-out
+rationale as slot 0073's ``ACTION_VALUES``.  See Migration 0091
+docstring for the full Pattern 81 non-application explanation.
+"""
+
+
+CREATED_BY_PREFIXES: Final[tuple[str, ...]] = (
+    "matcher:",
+    "cli:",
+    "legacy:",
+    "human:",
+    "system:",
+)
+"""Canonical 5-prefix vocabulary for ``canonical_events.created_by``.
+
+Authoritative per ADR-118 V2.44 atomicity contract + session-92 Miles
+❌ resolution (Cohort 5+ Slot B design council) + Migration 0091.
+
+The ``created_by`` column is ``VARCHAR(64) NOT NULL`` on canonical_events
+(added by Migration 0091; default 'legacy:pre-matcher' for any pre-
+existing rows in dev/staging).  A DDL CHECK does NOT enforce free-text
+format (string-format validation is Pattern 81 non-application territory
+and overkill for a free-text actor field) -- the discipline lives at
+this constant + the real-guard validation in
+``create_canonical_event()`` CRUD path.
+
+Conventions (canonical):
+    ``'matcher:slot-B:v1'``       -- steady-state Slot B matcher writes
+                                     (the dominant path post-Cohort-5+
+                                     activation).
+    ``'cli:matcher-backfill:v1'`` -- one-time backfill CLI writes
+                                     (precog matcher backfill --all).
+    ``'legacy:pre-matcher'``      -- DEFAULT applied to any pre-existing
+                                     canonical_events rows at Migration
+                                     0091 apply time (zero rows in dev
+                                     per MCP probe).
+    ``'human:<username>'``        -- operator-driven fixture / manual
+                                     INSERT paths.
+    ``'system:<context>'``        -- seed / migration / test fixtures.
+
+Length-bound enforcement (``len(created_by) <= 64`` matching VARCHAR(64)
+column boundary) lives in CRUD-layer validation per slot 0073 #1085
+finding #3 inheritance.
+
+Pattern 73 SSOT: any future code adding canonical_events writes MUST
+import from this constant rather than hardcoding the prefix list.  The
+matcher module (``src/precog/matching/canonical_event_matcher.py``)
+uses this constant in its own real-guard validation as defense-in-depth
+against drift between matcher-internal identity strings and the
+project-wide canonical vocabulary.
+
+Pattern 81 non-application: the prefix set is closed (5 actor categories
+covering every conceivable origin of a canonical_events row); a lookup
+table is not warranted -- same shape as slot 0073's
+``DECIDED_BY_PREFIXES``.
+"""
+
+
 SOURCE_KIND_VALUES: Final[tuple[str, ...]] = (
     "api",
     "scrape",

@@ -232,19 +232,32 @@ def test_manual_v1_seed_row_exists_with_canonical_code_ref(db_pool: Any) -> None
 
 
 def test_only_one_seed_row_post_migration(db_pool: Any) -> None:
-    """Phase 1 commitment: exactly ONE seed row post-0071.
+    """Phase 1 commitment: exactly ONE manual_v1 seed row in match_algorithm.
 
     ADR-118 v2.40 line 17628 + Phase 1 commitments line ~17929 are explicit:
     "Phase 1 seeds exactly one row".  Future cohorts extend by INSERT (e.g.,
-    Phase 3 keyword_jaccard_v1 ships in its cohort-of-origin migration), but
-    Migration 0071 itself seeds exactly one row.  If a future PR sneaks an
-    additional seed into 0071, this test fires.
+    Migration 0091 ships `cohort5_event_matcher_v1` as the Slot B addition,
+    which is the expected cohort-of-origin shape), but Migration 0071 itself
+    seeds exactly one row.  If a future PR sneaks an additional manual_*
+    seed into 0071, this test fires.
+
+    Scope refinement post-Migration-0091 (session 107 Slot B dispatch):
+    the test was originally a COUNT(*)==1 assertion, but Cohort 5+ Slot B
+    legitimately added a second `match_algorithm` row.  The Pattern 73 SSOT
+    discipline the test enforces is still "Migration 0071 seeds exactly
+    one row" -- so the test is updated to count rows seeded by Migration
+    0071 (anything matching `name = 'manual_v1' AND version = '1.0.0'`)
+    rather than total row count.
     """
     with get_cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM match_algorithm")
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM match_algorithm WHERE name = %s AND version = %s",
+            ("manual_v1", "1.0.0"),
+        )
         row = cur.fetchone()
     assert row["n"] == 1, (
-        f"Expected exactly 1 seed row post-0071; got {row['n']} (Phase 1 commitments line ~17929)"
+        f"Expected exactly 1 manual_v1 seed row post-0071; got {row['n']} "
+        "(Phase 1 commitments line ~17929)"
     )
 
 
@@ -269,11 +282,18 @@ def test_seed_replay_is_idempotent_via_on_conflict_do_nothing(db_pool: Any) -> N
     partial-application + retry would crash.  This test catches that
     regression.
     """
-    # Pre-condition: exactly 1 seed row from the migration upgrade.
+    # Pre-condition: exactly 1 manual_v1 seed row from the migration upgrade.
+    # Post-Migration-0091 the match_algorithm table has 2+ rows (manual_v1
+    # plus cohort5_event_matcher_v1); scope by name to isolate the seed
+    # under test (Pattern 73 SSOT: each migration's seed test scopes to its
+    # own seed-row identity).
     with get_cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM match_algorithm")
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM match_algorithm WHERE name = %s AND version = %s",
+            ("manual_v1", "1.0.0"),
+        )
         n_before = cur.fetchone()["n"]
-    assert n_before == 1, f"Pre-condition broken: expected 1 row, got {n_before}"
+    assert n_before == 1, f"Pre-condition broken: expected 1 manual_v1 row, got {n_before}"
 
     # Replay the seed INSERT verbatim (with the ON CONFLICT clause).  A
     # successful no-op proves the migration's seed helper is idempotent.

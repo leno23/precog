@@ -408,6 +408,22 @@ features:
   canonical_observations_writer:
     enabled: false  # Cohort 4 default — flip to true at session 87 soak start
 
+  # Cohort 5+ Slot B canonical-event matcher (Migration 0091 + matcher module).
+  # Creates canonical_events rows from upstream source state (games +
+  # platform_events) with V2.44 atomicity contract.  FUNCTIONAL implementation
+  # (unlike slot 0078's no-op skeleton) -- when enabled, immediately starts
+  # processing the pending queue.  Disabled by default until session 108+
+  # soak window opens after PR-B (slot B) merges -- see
+  # docs/operations/canonical_event_matcher_runbook.md for activation
+  # procedure + safety considerations.
+  canonical_event_matcher:
+    enabled: false  # Cohort 5+ Slot B default — flip to true at session 108+ soak start
+    poll_interval_sec: 30           # heartbeat interval
+    batch_size: 100                 # rows per transaction in steady-state
+    t_match: "0.85"                 # confidence threshold; below = canonical_match_reviews
+    backfill_batch_size: 1000       # rows per transaction in backfill (CLI-driven)
+    circuit_breaker_threshold: 5    # consecutive logical-failures before pause-eligible
+
   # Development features
   debug_mode: false  # Extra logging, no real trades
   dry_run: false  # Simulate trades but don't execute
