@@ -831,7 +831,7 @@ _GAME_STATUS_VALUES: tuple[str, ...] = (
 
 # Terminal parent-game statuses (used in derive_game_status disambiguation rule 1).
 _TERMINAL_PARENT_STATUSES: frozenset[str] = frozenset(
-    {"final", "final_ot", "cancelled", "postponed", "delayed"}
+    {"final", "final_ot", "cancelled", "postponed", "delayed", "suspended"}
 )
 
 
@@ -917,9 +917,11 @@ def derive_game_status(
     if situation.get("period_complete") is True:
         return "end_of_period"
 
-    # Rule 3: period >= 2 + clock_seconds == 0 + not terminal -> halftime.
+    # Rule 3: period == 2 + clock_seconds == 0 + not terminal -> halftime.
+    # Strictly end-of-period-2; periods 3+/OT at clock=0 without an explicit
+    # ESPN period_complete signal fall through to rule 4 ('in_progress').
     # Use float() comparison to handle Decimal vs int.
-    if period >= 2 and clock_seconds is not None and float(clock_seconds) == 0.0:
+    if period == 2 and clock_seconds is not None and float(clock_seconds) == 0.0:
         return "halftime"
 
     # Rule 4: live tick (period >= 1 + clock value present).

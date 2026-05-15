@@ -1281,7 +1281,7 @@ class TestDeriveGameStatusUnit:
     Disambiguation rules (priority order):
         1. parent_game_status terminal -> propagate
         2. situation['period_complete'] = True -> 'end_of_period'
-        3. period >= 2 + clock_seconds == 0 -> 'halftime'
+        3. period == 2 + clock_seconds == 0 -> 'halftime'
         4. period >= 1 + clock_seconds not None -> 'in_progress'
         5. default -> 'pre'
     """
@@ -1391,3 +1391,47 @@ class TestDeriveGameStatusUnit:
             parent_game_status="cancelled",
         )
         assert result == "cancelled"
+
+    def test_derive_game_status_period_3_clock_zero_is_in_progress(self):
+        """Rule 3 narrowing (#1174 P1 #1): period=3, clock=0, no period_complete -> 'in_progress'.
+
+        Pre-fix `period >= 2` over-detected halftime on period 3 at clock=0
+        when ESPN did not emit period_complete.  Post-fix `period == 2`
+        narrows rule 3 to strictly end-of-period-2; period 3+ falls through
+        to rule 4 ('in_progress') since clock_seconds is not None.
+        """
+        result = derive_game_status({"period": 3, "clock_seconds": 0})
+        assert result == "in_progress"
+
+    def test_derive_game_status_period_4_clock_zero_is_in_progress(self):
+        """Rule 3 narrowing (#1174 P1 #1): period=4, clock=0, no period_complete -> 'in_progress'.
+
+        Same over-detection bug as period=3; period 4 at clock=0 without
+        an explicit ESPN period_complete signal is a live tick (rule 4),
+        not halftime.
+        """
+        result = derive_game_status({"period": 4, "clock_seconds": 0})
+        assert result == "in_progress"
+
+    def test_derive_game_status_ot_period_clock_zero_is_in_progress(self):
+        """Rule 3 narrowing (#1174 P1 #1): OT period (5), clock=0, no period_complete -> 'in_progress'.
+
+        OT periods at clock=0 must not be mis-classified as halftime;
+        they fall through to rule 4 absent an explicit period_complete
+        signal or a terminal parent status.
+        """
+        result = derive_game_status({"period": 5, "clock_seconds": 0})
+        assert result == "in_progress"
+
+    def test_derive_game_status_suspended_from_parent(self):
+        """Rule 1 (#1174 P1 #2): parent='suspended' -> 'suspended'.
+
+        Option A per session 107 decision: 'suspended' joins the terminal
+        parent-status set alongside delayed/postponed.  At a given tick,
+        a 'suspended' parent overrides row-level signals (consistent with
+        delayed/postponed treatment of "may-resume" statuses).
+        """
+        result = derive_game_status(
+            {"period": 2, "clock_seconds": 300}, parent_game_status="suspended"
+        )
+        assert result == "suspended"
