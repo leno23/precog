@@ -191,7 +191,7 @@ def status() -> None:
         "Pending queue (unlinked platform_events)", str(summary["unlinked_platform_events"])
     )
     table.add_row("Creates in last 24h", str(summary["recent_creates_24h"]))
-    table.add_row("Conflicts (retire/quarantine) in last 24h", str(summary["recent_conflicts_24h"]))
+    table.add_row("Retires/quarantines in last 24h", str(summary["recent_retires_24h"]))
 
     console.print(table)
 

@@ -45,7 +45,7 @@ BEGIN;
 COMMIT;
 ```
 
-Either all steps commit or all roll back. Per-candidate exceptions invalidate the entire batch transaction (V2.44 atomicity); the next poll cycle re-tries from a clean state. Idempotency is guaranteed by `uq_canonical_events_nk` UNIQUE constraint on `natural_key_hash` — re-runs of the same candidate yield an `existing` canonical_event_id rather than duplicate creation.
+For each candidate, either all 9 steps commit or all 9 roll back via the per-candidate SAVEPOINT (V2.44 atomicity preserved within-candidate). Post-PR-C (#1195, session 108), per-candidate exceptions trigger `ROLLBACK TO SAVEPOINT` for that candidate only — sibling candidates in the same batch commit normally. The next poll cycle re-tries failed candidates from a clean state. Idempotency is guaranteed by `uq_canonical_events_nk` UNIQUE constraint on `natural_key_hash` — re-runs of the same candidate yield an `existing` canonical_event_id rather than duplicate creation.
 
 ---
 
@@ -78,6 +78,13 @@ LIMIT 1;
 
 **Default:** `false` at slot-B deploy time.
 
+**Important asymmetry (PR-C clarification):** there are TWO independent activation paths and they behave differently:
+
+- **Backfill CLI (`python main.py matcher backfill --all`)** — does NOT check the feature flag. The CLI invokes the matcher logic directly via `backfill_all()`. Operators can run backfills regardless of flag state. This is intentional — backfill is a one-time bulk operation, not a long-running service.
+- **Steady-state supervised poller (`python main.py scheduler start --supervised`)** — the matcher service is registered with `ServiceSupervisor` unconditionally (so health-check coverage stays uniform), BUT instantiation of the service is gated by the `enabled_services` set passed to `create_services()`. There is currently no CLI flag (e.g., `--canonical-event-matcher`) that adds the matcher to `enabled_services`; activation requires either a code-path update to the scheduler CLI to add a flag, OR direct invocation of `create_services(config, enabled_services={"canonical_event_matcher", ...})` from a wrapper script.
+
+The `features.canonical_event_matcher.enabled` YAML key is documentation of operator intent (read by the runbook + this doc) — it is NOT currently consulted by `create_services()` or any `is_feature_enabled()` helper. A future slot may wire the YAML flag to gate `enabled_services` membership automatically; until then operators must drive enablement via the wrapper-script approach.
+
 **Activation procedure** (session 108+ soak window, or any operator-driven enablement):
 
 1. **Pre-flight checks** — run the matcher's test suites locally:
@@ -85,6 +92,7 @@ LIMIT 1;
    python -m pytest tests/integration/database/test_migration_0091_canonical_event_match_log.py -v
    python -m pytest tests/unit/database/test_crud_canonical_event_match_log_unit.py -v
    python -m pytest tests/unit/matching/test_canonical_event_matcher_unit.py -v
+   python -m pytest tests/integration/matching/test_canonical_event_matcher_integration.py -v
    ```
    All MUST pass before flipping the flag.
 
@@ -92,7 +100,7 @@ LIMIT 1;
    ```powershell
    python main.py matcher backfill --all --dry-run --batch-size 100
    ```
-   Inspect the receipt: number of candidates, expected per-action counts, any errors.
+   Inspect the receipt: number of candidates, expected per-action counts, any errors. (Backfill ignores the feature flag — see asymmetry note above.)
 
 3. **Run the live backfill** (off-peak recommended):
    ```powershell
@@ -100,17 +108,30 @@ LIMIT 1;
    ```
    Estimated wall-clock: ~5-15 min for ~3,500-5,000 platform_events with game_id. The CLI prints the receipt at end.
 
-4. **Enable the flag** in the active environment's `system.yaml`:
+4. **Flip the YAML flag** in the active environment's `system.yaml` (intent-marker; see asymmetry note above):
    ```yaml
    features:
      canonical_event_matcher:
        enabled: true
    ```
+   This change is informational — operators downstream of this runbook will see the flag and know the matcher is intended to be running. The supervisor does NOT auto-pickup this change.
 
-5. **Restart the supervisor** so the registration takes effect:
+5. **Start the supervisor with the matcher in `enabled_services`** (wrapper-script approach until a CLI flag ships):
    ```powershell
    python main.py scheduler stop
-   python main.py scheduler start --supervised --foreground
+   # The scheduler `start` command currently exposes flags only for
+   # --espn / --kalshi.  To run the matcher under supervision, either
+   # patch `cli/scheduler.py` to add a --canonical-event-matcher flag,
+   # OR invoke create_services() directly from a wrapper script:
+   #
+   #   from precog.config.runner_config import RunnerConfig
+   #   from precog.schedulers.service_supervisor import create_services
+   #   config = RunnerConfig.from_yaml("...")
+   #   services = create_services(
+   #       config,
+   #       enabled_services={"canonical_event_matcher"},
+   #       ...
+   #   )
    ```
 
 6. **Verify the matcher is healthy** within 2 minutes:
@@ -150,7 +171,7 @@ python main.py matcher status
 
 If `unlinked_platform_events` is climbing despite the matcher running:
 
-- Per-candidate errors are rolling back batches. Inspect `canonical_event_match_log` for missing `action='create'` rows in the expected time window.
+- Individual candidates may be failing repeatedly (SAVEPOINT isolates per-candidate failures from siblings post-PR-C; the batch as a whole continues but specific candidates never commit). Inspect `canonical_event_match_log` for missing `action='create'` rows in the expected time window AND check `receipt.errors` / `receipt.error_excerpts` in scheduler stats for per-candidate failure patterns.
 - Investigate per-candidate exceptions:
   ```sql
   -- Recent matcher errors in supervisor log via stats
