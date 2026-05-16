@@ -109,16 +109,31 @@ def collect_known_flags() -> dict[tuple[str, ...], set[str]]:
 
     subcommands = _discover_subcommands()
 
-    # First pass: collect own flags per subcommand (without inheritance)
-    own_flags: dict[tuple[str, ...], set[str]] = {}
-    for subcmd in subcommands:
-        try:
-            result = runner.invoke(app, subcmd + ["--help"])
-            own_flags[tuple(subcmd)] = _extract_flags_from_help(result.output)
-        except Exception:
-            # Any subcommand-help failure (missing subcmd, registration error,
-            # etc.) should skip this entry rather than crash the whole linter.
-            own_flags[tuple(subcmd)] = set()
+    # Set a very wide COLUMNS so Rich's help-table renderer does NOT
+    # truncate long flag names with U+2026 ellipsis (e.g.
+    # ``--canonical-event-matcher`` -> ``--canonical-event-matc...``).
+    # Without this, _extract_flags_from_help only sees the truncated
+    # form and rejects valid invocations as "unknown flag" (#769
+    # session 109 follow-up to S75 hook).
+    prior_columns = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = "400"
+
+    try:
+        # First pass: collect own flags per subcommand (without inheritance)
+        own_flags: dict[tuple[str, ...], set[str]] = {}
+        for subcmd in subcommands:
+            try:
+                result = runner.invoke(app, subcmd + ["--help"])
+                own_flags[tuple(subcmd)] = _extract_flags_from_help(result.output)
+            except Exception:
+                # Any subcommand-help failure (missing subcmd, registration error,
+                # etc.) should skip this entry rather than crash the whole linter.
+                own_flags[tuple(subcmd)] = set()
+    finally:
+        if prior_columns is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = prior_columns
 
     # Second pass: propagate ancestor flags down.
     # E.g., `db init` inherits from `db` which inherits from top-level.

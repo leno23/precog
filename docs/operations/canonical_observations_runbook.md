@@ -60,6 +60,13 @@ ORDER BY last_heartbeat DESC;
 
 **Note:** the `features.canonical_observations_writer.enabled` flag is currently **observation-only** — Cohort 4 ships the writer skeleton + ServiceSupervisor registration but the writer's per-source data-collection logic ships in Cohort 5+. Flipping the flag today registers/deregisters the heartbeat surface but does not start/stop any data-collection traffic. Full operator-toggle behavior activates with Cohort 5+ writer module landing.
 
+**Activation model (CLI seam closed in session 109):** the writer follows the project's standard two-axis enable model:
+
+- **YAML flag (`features.canonical_observations_writer.enabled` in system.yaml)** — read by `RunnerConfig.__post_init__` at supervisor construction time.  When `true`, the service's `ServiceConfig.enabled` is `True` so the supervisor will instantiate it; when `false`, registration still happens but the supervisor skips instantiation.
+- **CLI flag (`--canonical-observations-writer` on `scheduler start --supervised`)** — adds the service name to the `enabled_services` set passed to `create_services()`.  Without this flag, the writer stays out of the supervisor regardless of YAML state.
+
+Both axes must be set for the writer to run under supervision.  Earlier revisions of this runbook documented a wrapper-script workaround; that workaround is no longer required.
+
 **Activation procedure** (session 87 soak window opening, or any future operator-driven enablement):
 
 1. **Pre-flight check:** verify the writer's CRUD path is wired correctly by running the unit + integration test suites locally:
@@ -86,12 +93,14 @@ ORDER BY last_heartbeat DESC;
      canonical_observations_writer:
        enabled: true
    ```
+   `RunnerConfig.__post_init__` reads this flag at supervisor construction time; the next `scheduler start --supervised` invocation picks up the new value.
 
-4. **Restart the supervisor** so the registration takes effect:
+4. **Restart the supervisor with the writer enabled** via the dedicated CLI flag:
    ```powershell
    python main.py scheduler stop
-   python main.py scheduler start --supervised --foreground
+   python main.py scheduler start --supervised --foreground --canonical-observations-writer
    ```
+   The `--canonical-observations-writer` flag adds the service to `enabled_services`; combined with the step-3 YAML flag, the supervisor will instantiate and run the writer.  Combine with `--no-espn` / `--no-kalshi` to run the writer in isolation, or omit those flags to run alongside the ESPN + Kalshi pollers.
 
 5. **Verify the writer is healthy** within 2 minutes (one heartbeat cycle):
    ```sql

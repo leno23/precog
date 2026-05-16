@@ -224,6 +224,8 @@ def _start_supervised_mode(
     foreground: bool,
     force: bool,
     verbose: bool,
+    canonical_event_matcher: bool = False,
+    canonical_observations_writer: bool = False,
 ) -> None:
     """Start services using ServiceSupervisor for production-grade management.
 
@@ -244,6 +246,17 @@ def _start_supervised_mode(
         foreground: Run in foreground (blocks until Ctrl+C)
         force: Override startup guard if another scheduler is detected
         verbose: Enable verbose output
+        canonical_event_matcher: Enable canonical-event matcher service
+            (Cohort 5+ Slot B).  Requires
+            ``features.canonical_event_matcher.enabled=true`` in
+            system.yaml for the underlying RunnerConfig to mark the
+            service as enabled; this flag adds the service name to the
+            ``enabled_services`` set passed to ``create_supervisor``.
+        canonical_observations_writer: Enable canonical-observations
+            writer service (Cohort 4 slot 0078).  Requires
+            ``features.canonical_observations_writer.enabled=true`` in
+            system.yaml; see canonical_event_matcher above for the
+            two-axis gating model.
 
     Educational Note:
         ServiceSupervisor implements the "let it crash" philosophy from Erlang/OTP,
@@ -269,9 +282,16 @@ def _start_supervised_mode(
         enabled_services.add("espn")
     if kalshi:
         enabled_services.add("kalshi_rest")
+    if canonical_event_matcher:
+        enabled_services.add("canonical_event_matcher")
+    if canonical_observations_writer:
+        enabled_services.add("canonical_observations_writer")
 
     if not enabled_services:
-        console.print("[yellow]No services enabled. Use --espn or --kalshi.[/yellow]")
+        console.print(
+            "[yellow]No services enabled. Use --espn, --kalshi, "
+            "--canonical-event-matcher, or --canonical-observations-writer.[/yellow]"
+        )
         raise typer.Exit(code=1)
 
     # Parse configuration
@@ -561,6 +581,24 @@ def start(
         "--skip-migration-check",
         help="Skip database migration parity check (emergency debugging only)",
     ),
+    canonical_event_matcher: bool = typer.Option(
+        False,
+        "--canonical-event-matcher",
+        help=(
+            "Enable canonical-event matcher (Cohort 5+ Slot B). "
+            "Requires features.canonical_event_matcher.enabled=true in "
+            "system.yaml.  Supervised mode only."
+        ),
+    ),
+    canonical_observations_writer: bool = typer.Option(
+        False,
+        "--canonical-observations-writer",
+        help=(
+            "Enable canonical-observations writer (Cohort 4 Slot 0078). "
+            "Requires features.canonical_observations_writer.enabled=true "
+            "in system.yaml.  Supervised mode only."
+        ),
+    ),
 ) -> None:
     """Start data collection schedulers for ESPN and/or Kalshi.
 
@@ -642,6 +680,8 @@ def start(
             foreground=foreground,
             force=force,
             verbose=verbose,
+            canonical_event_matcher=canonical_event_matcher,
+            canonical_observations_writer=canonical_observations_writer,
         )
         return
 

@@ -78,12 +78,14 @@ LIMIT 1;
 
 **Default:** `false` at slot-B deploy time.
 
-**Important asymmetry (PR-C clarification):** there are TWO independent activation paths and they behave differently:
+**Activation model (CLI seam closed in session 109):** the matcher now has a two-axis activation gate that mirrors every other supervised service:
 
-- **Backfill CLI (`python main.py matcher backfill --all`)** — does NOT check the feature flag. The CLI invokes the matcher logic directly via `backfill_all()`. Operators can run backfills regardless of flag state. This is intentional — backfill is a one-time bulk operation, not a long-running service.
-- **Steady-state supervised poller (`python main.py scheduler start --supervised`)** — the matcher service is registered with `ServiceSupervisor` unconditionally (so health-check coverage stays uniform), BUT instantiation of the service is gated by the `enabled_services` set passed to `create_services()`. There is currently no CLI flag (e.g., `--canonical-event-matcher`) that adds the matcher to `enabled_services`; activation requires either a code-path update to the scheduler CLI to add a flag, OR direct invocation of `create_services(config, enabled_services={"canonical_event_matcher", ...})` from a wrapper script.
+- **YAML flag (`features.canonical_event_matcher.enabled` in system.yaml)** — read by `RunnerConfig.__post_init__` at supervisor construction time.  When `true`, the service's `ServiceConfig.enabled` is `True` so the supervisor will instantiate it; when `false`, registration still happens but the supervisor skips instantiation.
+- **CLI flag (`--canonical-event-matcher` on `scheduler start --supervised`)** — adds the service name to the `enabled_services` set passed to `create_services()`.  Without this flag, the matcher stays out of the supervisor regardless of YAML state.
 
-The `features.canonical_event_matcher.enabled` YAML key is documentation of operator intent (read by the runbook + this doc) — it is NOT currently consulted by `create_services()` or any `is_feature_enabled()` helper. A future slot may wire the YAML flag to gate `enabled_services` membership automatically; until then operators must drive enablement via the wrapper-script approach.
+Both axes must be set for the matcher to run under supervision.  This matches the project's standard two-axis enable model and replaces the wrapper-script workaround documented in earlier revisions.
+
+Backfill remains unchanged: `python main.py matcher backfill --all` does NOT consult the feature flag and runs the matcher logic directly.  This is intentional — backfill is a one-time bulk operation, not a long-running service.
 
 **Activation procedure** (session 108+ soak window, or any operator-driven enablement):
 
@@ -108,31 +110,20 @@ The `features.canonical_event_matcher.enabled` YAML key is documentation of oper
    ```
    Estimated wall-clock: ~5-15 min for ~3,500-5,000 platform_events with game_id. The CLI prints the receipt at end.
 
-4. **Flip the YAML flag** in the active environment's `system.yaml` (intent-marker; see asymmetry note above):
+4. **Flip the YAML flag** in the active environment's `system.yaml`:
    ```yaml
    features:
      canonical_event_matcher:
        enabled: true
    ```
-   This change is informational — operators downstream of this runbook will see the flag and know the matcher is intended to be running. The supervisor does NOT auto-pickup this change.
+   `RunnerConfig.__post_init__` reads this flag at supervisor construction time, so the change takes effect on the next `scheduler start --supervised` invocation.  No supervisor auto-reload — the next start picks up the new value.
 
-5. **Start the supervisor with the matcher in `enabled_services`** (wrapper-script approach until a CLI flag ships):
+5. **Start the supervisor with the matcher enabled** via the dedicated CLI flag:
    ```powershell
    python main.py scheduler stop
-   # The scheduler `start` command currently exposes flags only for
-   # --espn / --kalshi.  To run the matcher under supervision, either
-   # patch `cli/scheduler.py` to add a --canonical-event-matcher flag,
-   # OR invoke create_services() directly from a wrapper script:
-   #
-   #   from precog.config.runner_config import RunnerConfig
-   #   from precog.schedulers.service_supervisor import create_services
-   #   config = RunnerConfig.from_yaml("...")
-   #   services = create_services(
-   #       config,
-   #       enabled_services={"canonical_event_matcher"},
-   #       ...
-   #   )
+   python main.py scheduler start --supervised --foreground --canonical-event-matcher
    ```
+   The `--canonical-event-matcher` flag adds the service to `enabled_services`; combined with the step-4 YAML flag, the supervisor will instantiate and run the matcher.  Combine with `--no-espn` / `--no-kalshi` to run the matcher in isolation, or omit those flags to run alongside the ESPN + Kalshi pollers.
 
 6. **Verify the matcher is healthy** within 2 minutes:
    ```sql

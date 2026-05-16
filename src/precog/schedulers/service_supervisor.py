@@ -33,6 +33,7 @@ Related: ADR-100 (Service Supervisor Pattern)
 Requirements: REQ-DATA-001, REQ-OBSERV-001
 """
 
+import functools
 import logging
 import os
 import socket
@@ -200,6 +201,126 @@ class ServiceConfig:
     alert_threshold: int = 5
 
 
+# Canonical-layer services that ship behind feature flags and need both
+# YAML config + CLI flag wiring.  Pattern 73 SSOT: this constant is the
+# one authoritative source for the service-name string identity that
+# spans four surfaces:
+#   1. SERVICE_FACTORIES dict key (below in this module)
+#   2. system.yaml ``features.<service_name>.enabled`` key
+#   3. cli/scheduler.py ``--<name-with-dashes>`` flag + enabled_services
+#      set membership
+#   4. RunnerConfig.__post_init__ default-services set membership
+#      (this file, immediately below)
+#
+# Read by RunnerConfig.__post_init__ (which gates each service's
+# ServiceConfig.enabled on the YAML feature flag) and by
+# cli/scheduler.py (which adds the service to enabled_services when the
+# CLI flag is set).  See memory/feedback_cli_orphan_pattern_canonical_layer.md
+# for the failure mode this constant prevents: a service registered in
+# SERVICE_FACTORIES but with no CLI surface, so no operator can start it
+# under supervised mode without a code patch.
+#
+# Test: tests/integration/cli/test_cli_seam_canonical_layer.py
+# (test_canonical_layer_services_constant_matches_service_factories_keys)
+# verifies this constant aligns with SERVICE_FACTORIES at import time.
+CANONICAL_LAYER_SERVICES: tuple[str, ...] = (
+    "canonical_observations_writer",
+    "canonical_event_matcher",
+)
+
+
+def _human_readable_canonical_service_name(service_name: str) -> str:
+    """Return the human-readable display name for a canonical-layer service.
+
+    Used by RunnerConfig.__post_init__ to populate ServiceConfig.name.
+    Two-entry mapping rather than generic title-case so the operator-
+    facing strings stay stable + reviewable in code.
+    """
+    mapping = {
+        "canonical_observations_writer": "Canonical Observations Writer",
+        "canonical_event_matcher": "Canonical Event Matcher",
+    }
+    return mapping.get(service_name, service_name)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_canonical_service_yaml_flags() -> dict[str, bool]:
+    """Load all canonical-layer service ``features.<name>.enabled`` flags
+    in a single ConfigLoader instantiation, cached for the process lifetime.
+
+    Cached at the process level (``lru_cache(maxsize=1)``) so that the
+    ~20-25 ms cost of instantiating ``ConfigLoader`` + parsing system.yaml
+    is paid exactly once per process, not on every ``RunnerConfig`` build.
+    Before this caching layer, each ``RunnerConfig()`` call read system.yaml
+    once per canonical service (N=2 reads at ~23 ms each, ~46 ms total),
+    blowing the ``RunnerConfig.__post_init__`` performance contract
+    (avg latency < 0.5 ms) by ~94x.  See
+    ``tests/performance/schedulers/test_service_supervisor_performance.py``
+    ::``test_runner_config_creation_latency`` for the contract that this
+    cache restores.
+
+    Returns:
+        A dict mapping each name in ``CANONICAL_LAYER_SERVICES`` to its
+        truthy YAML state.  On any ConfigLoader exception, every service
+        defaults to ``False`` (fail-closed: an unconfigured or broken
+        config never silently enables a canonical-layer service).
+
+    Test override:
+        Tests that need per-call control patch
+        ``_read_canonical_service_yaml_enabled`` (which bypasses this
+        cache by routing every call through ``patch.object``).  Tests
+        that want a fresh dict-level read can call
+        ``_clear_canonical_service_cache_for_tests()``.
+    """
+    try:
+        from precog.config.config_loader import ConfigLoader
+
+        config = ConfigLoader()
+        return {
+            name: bool(config.get("system", f"features.{name}.enabled", default=False))
+            for name in CANONICAL_LAYER_SERVICES
+        }
+    except Exception as exc:
+        # Fail-closed on any config error -- the canonical-layer services
+        # are opt-in and stay disabled unless YAML explicitly enables them.
+        logger.debug(
+            "Failed to load canonical-layer service flags from system.yaml (%s); "
+            "defaulting all to disabled.",
+            exc,
+        )
+        return dict.fromkeys(CANONICAL_LAYER_SERVICES, False)
+
+
+def _read_canonical_service_yaml_enabled(service_name: str) -> bool:
+    """Return ``features.<service_name>.enabled`` from system.yaml.
+
+    Thin lookup over the process-wide cached flag dict built by
+    ``_load_canonical_service_yaml_flags()``.  Returns the YAML value
+    if present, else False (fail-closed: an unconfigured service stays
+    disabled until an operator explicitly flips the YAML flag).
+
+    Args:
+        service_name: One of the ``CANONICAL_LAYER_SERVICES`` entries.
+
+    Returns:
+        True iff ``features.<service_name>.enabled`` is truthy in
+        system.yaml.  False on any error (missing key, malformed YAML,
+        missing file, ConfigLoader exception) -- fail-closed so a broken
+        config never silently enables a canonical-layer service.
+    """
+    return _load_canonical_service_yaml_flags().get(service_name, False)
+
+
+def _clear_canonical_service_cache_for_tests() -> None:
+    """Clear the process-wide canonical-service YAML flag cache.
+
+    Test-only helper: any test that mutates ``system.yaml`` mid-process
+    and then expects ``_read_canonical_service_yaml_enabled`` to observe
+    the change must call this first.  Production code MUST NOT call this.
+    """
+    _load_canonical_service_yaml_flags.cache_clear()
+
+
 @dataclass
 class RunnerConfig:
     """
@@ -239,6 +360,18 @@ class RunnerConfig:
                 "kalshi_rest": ServiceConfig(name="Kalshi REST Poller", poll_interval=30),
                 "kalshi_ws": ServiceConfig(name="Kalshi WebSocket", enabled=False),
             }
+            # Canonical-layer services: register with enabled state matching
+            # the YAML feature flag.  The factory + ServiceSupervisor
+            # coverage is uniform; only instantiation gates on the enabled
+            # flag.  See feedback_cli_orphan_pattern_canonical_layer.md and
+            # CANONICAL_LAYER_SERVICES (above) for the Pattern 73 SSOT.
+            for service_name in CANONICAL_LAYER_SERVICES:
+                yaml_enabled = _read_canonical_service_yaml_enabled(service_name)
+                self.services[service_name] = ServiceConfig(
+                    name=_human_readable_canonical_service_name(service_name),
+                    enabled=yaml_enabled,
+                    poll_interval=30,
+                )
 
 
 # =============================================================================
