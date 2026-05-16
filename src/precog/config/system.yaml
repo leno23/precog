@@ -377,6 +377,37 @@ async:
   # 5 DB queries: Prevents connection pool exhaustion
 
 # ============================================
+# SCHEDULER DEFAULT SERVICES
+# ============================================
+# Default-enabled service set for `precog scheduler start --supervised`
+# when no per-service CLI flags are passed. CLI flags act as overrides:
+#   --service-name           → ensures the named service is enabled
+#   --no-service-name        → ensures the named service is disabled
+# (omitting both leaves the YAML-default behavior in place).
+#
+# Two-axis gating for canonical-layer services still applies: even if
+# a canonical service is in default_enabled_services, the
+# features.<service>.enabled YAML flag (below) gates whether the
+# supervisor actually instantiates it. The default list controls
+# REGISTRATION; the feature flag controls FUNCTIONAL READINESS.
+#
+# Suggested progression:
+#   - Soak window:  add canonical service to default_enabled_services
+#                   alongside flipping its features.<service>.enabled flag.
+#   - Production:   leave both flags on; the runbook activation procedure
+#                   becomes a one-line invocation.
+#
+# Reference: docs/operations/service_supervisor_runbook.md § 10.
+scheduler:
+  default_enabled_services:
+    - espn
+    - kalshi_rest
+  # Canonical-layer services are NOT in the default set until soak passes:
+  # - canonical_event_matcher           # add post-soak per #1205 + #1207
+  # - canonical_observations_writer     # add post-source-pipeline (Cohort 5+)
+  # - kalshi_ws                         # add when Epic #1043 maturation lands
+
+# ============================================
 # FEATURE FLAGS
 # ============================================
 # Enable/disable features without code changes

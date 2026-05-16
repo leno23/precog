@@ -159,6 +159,67 @@ def _prevent_system_sleep_for_supervised(logger: Any) -> None:
         atexit.register(_restore_sleep)
 
 
+def _resolve_enabled_services_from_yaml_and_flags(
+    *,
+    espn: bool | None,
+    kalshi: bool | None,
+    canonical_event_matcher: bool | None,
+    canonical_observations_writer: bool | None,
+) -> set[str]:
+    """Compute the final enabled_services set from YAML default + CLI overrides.
+
+    Reads ``scheduler.default_enabled_services`` from system.yaml as the
+    baseline (default ``["espn", "kalshi_rest"]`` if missing). Each
+    per-service CLI flag acts as an override:
+
+        flag is None       -> follow YAML default
+        flag is True       -> ensure service is in the set
+        flag is False      -> ensure service is NOT in the set (i.e., --no-X)
+
+    The two-axis canonical-service gate (YAML ``features.<name>.enabled``)
+    still applies downstream in ``RunnerConfig.__post_init__``; this
+    function only controls whether the service is registered in the
+    supervisor's enabled_services set, not whether the supervisor
+    actually instantiates it.
+
+    Reference: docs/operations/service_supervisor_runbook.md § 10.
+    """
+    try:
+        from precog.config.config_loader import ConfigLoader
+
+        config = ConfigLoader()
+        raw_default = config.get(
+            "system", "scheduler.default_enabled_services", default=["espn", "kalshi_rest"]
+        )
+        # Defensive: ensure list-of-strings shape; tolerate misconfig
+        default_services: set[str] = (
+            {str(s) for s in raw_default}
+            if isinstance(raw_default, list)
+            else {"espn", "kalshi_rest"}
+        )
+    except Exception:
+        # Fail-safe: missing/broken system.yaml shouldn't break scheduler startup
+        default_services = {"espn", "kalshi_rest"}
+
+    enabled_services = set(default_services)
+
+    # CLI override map: flag value -> service name
+    overrides: dict[str, bool | None] = {
+        "espn": espn,
+        "kalshi_rest": kalshi,
+        "canonical_event_matcher": canonical_event_matcher,
+        "canonical_observations_writer": canonical_observations_writer,
+    }
+    for service_name, flag in overrides.items():
+        if flag is True:
+            enabled_services.add(service_name)
+        elif flag is False:
+            enabled_services.discard(service_name)
+        # flag is None: no-op (follow YAML default)
+
+    return enabled_services
+
+
 def _create_priority_calculator() -> Any:
     """Create a LeaguePriorityCalculator from YAML config, or None if disabled.
 
@@ -211,8 +272,8 @@ def _create_priority_calculator() -> Any:
 
 
 def _start_supervised_mode(
-    espn: bool,
-    kalshi: bool,
+    espn: bool | None,
+    kalshi: bool | None,
     espn_interval: int,
     kalshi_interval: int,
     kalshi_env: str,
@@ -224,8 +285,8 @@ def _start_supervised_mode(
     foreground: bool,
     force: bool,
     verbose: bool,
-    canonical_event_matcher: bool = False,
-    canonical_observations_writer: bool = False,
+    canonical_event_matcher: bool | None = None,
+    canonical_observations_writer: bool | None = None,
 ) -> None:
     """Start services using ServiceSupervisor for production-grade management.
 
@@ -276,41 +337,54 @@ def _start_supervised_mode(
     console.print("\n[bold cyan]Starting Data Collection (Supervised Mode)[/bold cyan]\n")
     console.print("[dim]ServiceSupervisor provides health monitoring and auto-restart[/dim]\n")
 
-    # Determine enabled services
-    enabled_services: set[str] = set()
-    if espn:
-        enabled_services.add("espn")
-    if kalshi:
-        enabled_services.add("kalshi_rest")
-    if canonical_event_matcher:
-        enabled_services.add("canonical_event_matcher")
-    if canonical_observations_writer:
-        enabled_services.add("canonical_observations_writer")
+    # Resolve enabled services from YAML default + CLI overrides.
+    # YAML default lives at scheduler.default_enabled_services in system.yaml;
+    # each per-service flag (espn / kalshi / canonical_*) overrides per-service
+    # when True (add) or False (remove). None means "follow YAML default."
+    enabled_services = _resolve_enabled_services_from_yaml_and_flags(
+        espn=espn,
+        kalshi=kalshi,
+        canonical_event_matcher=canonical_event_matcher,
+        canonical_observations_writer=canonical_observations_writer,
+    )
 
     if not enabled_services:
         console.print(
-            "[yellow]No services enabled. Use --espn, --kalshi, "
-            "--canonical-event-matcher, or --canonical-observations-writer.[/yellow]"
+            "[yellow]No services enabled. Either edit "
+            "scheduler.default_enabled_services in system.yaml, or pass "
+            "--espn / --kalshi / --canonical-event-matcher / "
+            "--canonical-observations-writer on the CLI.[/yellow]"
         )
         raise typer.Exit(code=1)
+    # Booleans for downstream config / status printing — convenience aliases
+    # for code that reads "is ESPN enabled this run?" without re-deriving from
+    # the enabled_services set.
+    espn_active = "espn" in enabled_services
+    kalshi_active = "kalshi_rest" in enabled_services
 
     # Parse configuration
     league_list = [lg.strip().lower() for lg in leagues.split(",")]
     series_list = [s.strip() for s in series.split(",")]
 
     console.print("[bold]Configuration:[/bold]")
-    if espn:
+    if espn_active:
         console.print(f"  ESPN: {', '.join(league_list)} (interval: {espn_interval}s)")
-    if kalshi:
+    if kalshi_active:
         console.print(
             f"  Kalshi: {', '.join(series_list)} ({kalshi_env}, interval: {kalshi_interval}s)"
         )
+    if "canonical_event_matcher" in enabled_services:
+        console.print("  Canonical Event Matcher: enabled")
+    if "canonical_observations_writer" in enabled_services:
+        console.print("  Canonical Observations Writer: enabled")
     console.print(f"  Health check interval: {health_interval}s")
     console.print(f"  Max restarts: {max_restarts}")
     console.print()
 
     # Validate system readiness before starting
-    if not _validate_startup(espn=espn, kalshi=kalshi, kalshi_env=kalshi_env, logger=logger):
+    if not _validate_startup(
+        espn=espn_active, kalshi=kalshi_active, kalshi_env=kalshi_env, logger=logger
+    ):
         raise typer.Exit(code=1)
 
     try:
@@ -502,15 +576,23 @@ def _scheduler_stop_impl() -> None:
 
 @app.command()
 def start(
-    espn: bool = typer.Option(
-        True,
+    espn: bool | None = typer.Option(
+        None,
         "--espn/--no-espn",
-        help="Enable/disable ESPN game state polling",
+        help=(
+            "Override YAML default: include or exclude ESPN polling for this run. "
+            "When neither flag is set, follows scheduler.default_enabled_services "
+            "in system.yaml (typically includes ESPN)."
+        ),
     ),
-    kalshi: bool = typer.Option(
-        True,
+    kalshi: bool | None = typer.Option(
+        None,
         "--kalshi/--no-kalshi",
-        help="Enable/disable Kalshi market price polling",
+        help=(
+            "Override YAML default: include or exclude Kalshi REST polling for this run. "
+            "When neither flag is set, follows scheduler.default_enabled_services "
+            "in system.yaml (typically includes Kalshi REST)."
+        ),
     ),
     espn_interval: int = typer.Option(
         30,
@@ -581,22 +663,26 @@ def start(
         "--skip-migration-check",
         help="Skip database migration parity check (emergency debugging only)",
     ),
-    canonical_event_matcher: bool = typer.Option(
-        False,
-        "--canonical-event-matcher",
+    canonical_event_matcher: bool | None = typer.Option(
+        None,
+        "--canonical-event-matcher/--no-canonical-event-matcher",
         help=(
-            "Enable canonical-event matcher (Cohort 5+ Slot B). "
-            "Requires features.canonical_event_matcher.enabled=true in "
-            "system.yaml.  Supervised mode only."
+            "Override YAML default: include or exclude the canonical-event matcher. "
+            "When neither flag is set, follows scheduler.default_enabled_services. "
+            "Two-axis gate: features.canonical_event_matcher.enabled=true in "
+            "system.yaml is also required for the supervisor to instantiate the "
+            "service.  Supervised mode only."
         ),
     ),
-    canonical_observations_writer: bool = typer.Option(
-        False,
-        "--canonical-observations-writer",
+    canonical_observations_writer: bool | None = typer.Option(
+        None,
+        "--canonical-observations-writer/--no-canonical-observations-writer",
         help=(
-            "Enable canonical-observations writer (Cohort 4 Slot 0078). "
-            "Requires features.canonical_observations_writer.enabled=true "
-            "in system.yaml.  Supervised mode only."
+            "Override YAML default: include or exclude the canonical-observations writer. "
+            "When neither flag is set, follows scheduler.default_enabled_services. "
+            "Two-axis gate: features.canonical_observations_writer.enabled=true in "
+            "system.yaml is also required for the supervisor to instantiate the "
+            "service.  Supervised mode only."
         ),
     ),
 ) -> None:
@@ -685,7 +771,18 @@ def start(
         )
         return
 
-    # Non-supervised mode (simple implementation)
+    # Non-supervised mode (simple implementation).  Resolve None CLI flags to
+    # YAML defaults so behavior matches supervised mode for the espn/kalshi axes
+    # (canonical-layer services are supervised-mode-only).
+    enabled_services_unsup = _resolve_enabled_services_from_yaml_and_flags(
+        espn=espn,
+        kalshi=kalshi,
+        canonical_event_matcher=None,
+        canonical_observations_writer=None,
+    )
+    espn_active = "espn" in enabled_services_unsup
+    kalshi_active = "kalshi_rest" in enabled_services_unsup
+
     console.print("\n[bold cyan]Starting Data Collection Schedulers[/bold cyan]\n")
 
     started_services = []
@@ -695,7 +792,7 @@ def start(
     series_list = [s.strip() for s in series.split(",")]
 
     # Start ESPN updater
-    if espn:
+    if espn_active:
         console.print("[1/2] Starting ESPN game state polling...")
         console.print(f"  Leagues: {', '.join(league_list)}")
         console.print(f"  Interval: {espn_interval} seconds")
@@ -717,7 +814,7 @@ def start(
                 logger.error(f"ESPN polling error: {e}", exc_info=True)
 
     # Start Kalshi poller
-    if kalshi:
+    if kalshi_active:
         console.print("\n[2/2] Starting Kalshi market price polling...")
         console.print(f"  Environment: {kalshi_env}")
         console.print(f"  Series: {', '.join(series_list)}")
