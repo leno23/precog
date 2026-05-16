@@ -158,6 +158,10 @@ Every task that adds a new production module OR major-enriches an existing modul
 
 Once an Alembic migration file is merged to main, its file contents are **immutable**. No edits to migration code, seed values, docstrings, comments, or whitespace. Stale text in a shipped migration is corrected in the authority document for the decision (ADR amendment, DEVELOPMENT_PATTERNS revision) or in a subsequent migration's docstring — never in the shipped migration itself. Carve-out: migrations whose PR has not yet merged are editable freely (review-time edits are the intended surface). Canonical rule lives in `docs/guides/DEVELOPMENT_PATTERNS.md` Pattern 87 (V1.40+). Origin: session 79 PR #1063 — Glokta proposed a one-line forward-pointer comment in shipped Migration 0069; Ripley caught the proposal as itself violating the rule (which until now was project-folklore). Folklore promoted to Pattern to prevent the next reviewer from reasonably proposing the same edit.
 
+### 11. Prefer Bash Tool Over PowerShell Tool — when POSIX-portable
+
+When invoking shell commands via tools, **prefer Bash over PowerShell** whenever the command is POSIX-portable. PowerShell is reserved for genuinely PS-specific operations (Windows cmdlets, registry/HKLM access, PS-pipeline-object semantics). Origin: session 109 H7-b repeat-prompt-loop observation — PowerShell tool calls hit permission prompts at higher rate than equivalent Bash calls, and Claude Code's auto-allowlist coverage is broader for Bash than PowerShell. Every avoidable PowerShell call is an avoidable bridge-failure point. Env var prefixes work inline in Bash on Windows: `PRECOG_ENV=test python -m pytest ...`. Full rule + exceptions: `memory/feedback_bash_over_powershell.md` (auto-loaded at session start via MEMORY.md).
+
 ---
 
 ## Repository Structure
