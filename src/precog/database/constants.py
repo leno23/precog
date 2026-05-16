@@ -612,9 +612,14 @@ this constant + the real-guard validation in
 ``create_canonical_event()`` CRUD path.
 
 Conventions (canonical):
-    ``'matcher:slot-B:v1'``       -- steady-state Slot B matcher writes
+    ``'matcher:v1'``              -- steady-state matcher writes
                                      (the dominant path post-Cohort-5+
-                                     activation).
+                                     activation).  Renamed from
+                                     ``'matcher:slot-B:v1'`` by Migration
+                                     0092 (session 110): the cohort/slot
+                                     framing was session-planning
+                                     shorthand that should not have
+                                     leaked into production data values.
     ``'cli:matcher-backfill:v1'`` -- one-time backfill CLI writes
                                      (precog matcher backfill --all).
     ``'legacy:pre-matcher'``      -- DEFAULT applied to any pre-existing

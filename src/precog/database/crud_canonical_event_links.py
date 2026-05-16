@@ -282,9 +282,9 @@ def create_link(
             CLAUDE.md Critical Pattern #1.  Algorithm-derived match
             confidence; operator overrides typically use Decimal('1.0').
         algorithm_id: BIGINT FK into ``match_algorithm.id``.  NOT
-            NULL.  Matcher writes use ``cohort5_event_matcher_v1.id``
+            NULL.  Matcher writes use ``event_matcher_v1.id``
             (resolved via
-            ``crud_canonical_event_match_log.get_cohort5_event_matcher_algorithm_id()``);
+            ``crud_canonical_event_match_log.get_event_matcher_algorithm_id()``);
             operator overrides use ``manual_v1.id`` (slot 0073
             ``get_manual_v1_algorithm_id()``).
         decided_by: VARCHAR(64) NOT NULL actor attribution.  MUST
@@ -320,8 +320,8 @@ def create_link(
         ...     canonical_event_id=42,
         ...     platform_event_id=89,
         ...     confidence=Decimal("0.987"),
-        ...     algorithm_id=2,  # cohort5_event_matcher_v1
-        ...     decided_by="service:matcher:slot-B:v1",
+        ...     algorithm_id=2,  # event_matcher_v1
+        ...     decided_by="service:matcher:v1",
         ... )
 
     Educational Note:

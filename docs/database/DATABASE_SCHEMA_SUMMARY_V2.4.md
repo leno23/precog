@@ -1,6 +1,38 @@
 # Database Schema Summary
 
-<!-- FRESHNESS: alembic_head=0091, verified=2026-05-14, tables=64, migrations=87, last_changelog_migration=0091 -->
+<!-- FRESHNESS: alembic_head=0092, verified=2026-05-16, tables=64, migrations=88, last_changelog_migration=0092 -->
+<!--
+Changelog from FRESHNESS marker bump alembic_head 0091 -> 0092 (V2.4 amended-in-place, 2026-05-16):
+
+Migration 0092 (session 110) -- rename match_algorithm seed row
+``cohort5_event_matcher_v1`` -> ``event_matcher_v1`` (drop
+session-planning shorthand from production data values, scope B
+symmetric).  Pure data-side UPDATE (no DDL); paired in the same PR
+with code-side updates to ``CREATED_BY_MATCHER`` and
+``DECIDED_BY_MATCHER`` constants in
+``src/precog/matching/canonical_event_matcher.py``
+(``matcher:slot-B:v1`` -> ``matcher:v1`` and
+``service:matcher:slot-B:v1`` -> ``service:matcher:v1``) + helper
+function rename (``get_cohort5_event_matcher_algorithm_id`` ->
+``get_event_matcher_algorithm_id``).
+
+Because the matcher has not been activated in production (feature flag
+``features.canonical_event_matcher.enabled`` still ``false`` in
+system.yaml), ``canonical_event_match_log`` carries zero rows and
+``canonical_events.created_by`` carries only the migration-default
+``'legacy:pre-matcher'`` value -- no data migration of historical
+``decided_by`` / ``created_by`` values is required.  The rename is
+forward-only for new writes.
+
+Pattern 87 (Append-Only Migrations) compliance: Migration 0091's file
+is immutable; its docstring + comments + SQL literals retain the
+original ``cohort5_event_matcher_v1`` / ``matcher:slot-B:v1`` /
+``service:matcher:slot-B:v1`` text as written.  The rename
+documentation lives in Migration 0092's docstring per Pattern 87.
+
+Table count: 64 -> 64 (no DDL change).
+Migration count: 87 -> 88 (added 0092).
+-->
 <!--
 Changelog from FRESHNESS marker bump alembic_head 0090 -> 0091 (V2.4 amended-in-place, 2026-05-14):
 
@@ -1424,7 +1456,8 @@ follow-up bump):
 | **0080** | **Cohort 4 slot 0080 — combined `game_states` + `games` `canonical_event_id` nullable FKs (Pattern 84 by analogy)** | 2 ALTER TABLE rounds (each: ADD COLUMN + NOT VALID + VALIDATE + INDEX) + 2 indexes; first-ever Pattern 84 by-analogy use for FK on populated tables; slot 0081 retired into 0080 per V2.43 Item 2 (permanent slot 0081 hole) |
 | **0082** | **Cohort 4 slot 0082 — `temporal_alignment.canonical_event_id` nullable FK (Pattern 84 2nd by-analogy use)** | 1 ALTER TABLE round + 1 index; N=2 threshold reached → Pattern 84 promoted to V1.42 in PR #1138 |
 | **0084** | **Cohort 4 close-out slot 0084 — CANONICAL LAYER REDESIGN (V2.45 Items 1/4/6/8)** | DROP COLUMN canonical_observations.payload (Item 4); RENAME canonical_observations.canonical_event_id → canonical_primary_event_id (Item 8); DROP TABLE temporal_alignment + CREATE TABLE with new pure-linkage shape (Item 6); CREATE TABLE canonical_observation_event_links (Item 8); slot 0083 deferred to Cohort 5+ (Item 1, permanent slot 0083 hole) |
-| **0091** | **Cohort 5+ Slot B — canonical_event_match_log audit ledger + canonical_events.created_by provenance column + match_algorithm matcher seed; chain head** | CREATE TABLE canonical_event_match_log (5th audit ledger; mirrors slot 0073 shape, event-tier; 13 columns + 4 FKs + 6-value action CHECK + 3 indexes); ADD COLUMN canonical_events.created_by VARCHAR(64) (Miles P41 resolution); INSERT new match_algorithm row cohort5_event_matcher_v1 (id=2). Matcher module ships in parallel behind feature flag; PR #1195 (PR-C SAVEPOINT hardening) is the architectural follow-up before flag flip. Catalog rows for 0088/0089/0090 deferred to a follow-up bump |
+| **0091** | **Cohort 5+ Slot B — canonical_event_match_log audit ledger + canonical_events.created_by provenance column + match_algorithm matcher seed** | CREATE TABLE canonical_event_match_log (5th audit ledger; mirrors slot 0073 shape, event-tier; 13 columns + 4 FKs + 6-value action CHECK + 3 indexes); ADD COLUMN canonical_events.created_by VARCHAR(64) (Miles P41 resolution); INSERT new match_algorithm row cohort5_event_matcher_v1 (id=2; renamed to event_matcher_v1 by Migration 0092). Matcher module ships in parallel behind feature flag; PR #1195 (PR-C SAVEPOINT hardening) is the architectural follow-up before flag flip. Catalog rows for 0088/0089/0090 deferred to a follow-up bump |
+| **0092** | **Rename match_algorithm seed cohort5_event_matcher_v1 -> event_matcher_v1 (session-shorthand drop, scope B symmetric); chain head** | UPDATE match_algorithm SET name='event_matcher_v1' WHERE name='cohort5_event_matcher_v1' AND version='1.0.0'.  Pure data-side rename (no DDL); paired in the same PR with code-side updates to `CREATED_BY_MATCHER` ("matcher:slot-B:v1" -> "matcher:v1") + `DECIDED_BY_MATCHER` ("service:matcher:slot-B:v1" -> "service:matcher:v1") constants + helper rename (`get_cohort5_event_matcher_algorithm_id` -> `get_event_matcher_algorithm_id`).  Matcher not yet activated in prod (feature flag false) so no historical writer rows reference the old strings.  Pattern 87 (Append-Only Migrations) demonstration: Migration 0091's file is immutable; rename docs live here. |
 
 All migrations have `downgrade()` functions.  Slot 0029 + slot 0081 + slot
 0083 intentionally skipped (portfolio_fills eliminated for 0029; slot 0081

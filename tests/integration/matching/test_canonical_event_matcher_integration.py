@@ -47,8 +47,8 @@ def _match_one_with_resolved_ids(
     candidate: _Candidate,
     *,
     algorithm_id: int,
-    created_by: str = "matcher:slot-B:v1",
-    decided_by: str = "service:matcher:slot-B:v1",
+    created_by: str = "matcher:v1",
+    decided_by: str = "service:matcher:v1",
 ) -> Any:
     """Test helper: resolve lookup IDs and call _match_one_candidate.
 
@@ -250,7 +250,7 @@ def test_match_one_candidate_writes_full_atomic_bundle(db_pool: Any) -> None:
 
         # Run the atomic write path inside a single transaction.
         with get_cursor(commit=True) as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
             result = _match_one_with_resolved_ids(
                 cur,
@@ -272,7 +272,7 @@ def test_match_one_candidate_writes_full_atomic_bundle(db_pool: Any) -> None:
             )
             ce_row = cur.fetchone()
             assert ce_row is not None
-            assert ce_row["created_by"] == "matcher:slot-B:v1"
+            assert ce_row["created_by"] == "matcher:v1"
             assert ce_row["lifecycle_phase"] == "proposed"
 
             # 2. canonical_event_links row created.
@@ -296,7 +296,7 @@ def test_match_one_candidate_writes_full_atomic_bundle(db_pool: Any) -> None:
             log_row = cur.fetchone()
             assert log_row is not None
             assert log_row["action"] == "create"
-            assert log_row["decided_by"] == "service:matcher:slot-B:v1"
+            assert log_row["decided_by"] == "service:matcher:v1"
 
             # 4. canonical_event_phase_log row auto-created by slot 0079 trigger.
             cur.execute(
@@ -344,7 +344,7 @@ def test_idempotent_rerun_yields_existing_canonical_event(db_pool: Any) -> None:
         )
 
         with get_cursor(commit=True) as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
             first = _match_one_with_resolved_ids(
                 cur,
@@ -399,7 +399,7 @@ def test_natural_key_hash_persisted_matches_helper_function(db_pool: Any) -> Non
             game_title=f"TEST nk {suffix}",
         )
         with get_cursor(commit=True) as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
             result = _match_one_with_resolved_ids(
                 cur,
@@ -587,7 +587,7 @@ def test_multi_candidate_batch_mid_failure_rolls_back_atomically(db_pool: Any) -
             game_title=f"TEST mid-fail target {target_sfx}",
         )
         with get_cursor(commit=True) as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
             pre_result = _match_one_with_resolved_ids(
                 cur,
@@ -850,7 +850,7 @@ def test_concurrent_canonical_events_insert_race(db_pool: Any) -> None:
 
         # Resolve algorithm_id once + capture results from each thread.
         with get_cursor() as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
 
         results: list[Any] = [None, None]
@@ -1163,7 +1163,7 @@ def test_unhandled_exception_path_releases_savepoint_for_siblings(
 
         # Resolve algorithm_id once.
         with get_cursor() as cur:
-            cur.execute("SELECT id FROM match_algorithm WHERE name = 'cohort5_event_matcher_v1'")
+            cur.execute("SELECT id FROM match_algorithm WHERE name = 'event_matcher_v1'")
             algo_id = int(cur.fetchone()["id"])
 
         candidates = [

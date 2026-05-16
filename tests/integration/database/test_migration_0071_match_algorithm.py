@@ -236,10 +236,11 @@ def test_only_one_seed_row_post_migration(db_pool: Any) -> None:
 
     ADR-118 v2.40 line 17628 + Phase 1 commitments line ~17929 are explicit:
     "Phase 1 seeds exactly one row".  Future cohorts extend by INSERT (e.g.,
-    Migration 0091 ships `cohort5_event_matcher_v1` as the Slot B addition,
-    which is the expected cohort-of-origin shape), but Migration 0071 itself
-    seeds exactly one row.  If a future PR sneaks an additional manual_*
-    seed into 0071, this test fires.
+    Migration 0091 ships the matcher algorithm row -- originally seeded as
+    ``cohort5_event_matcher_v1`` and renamed to ``event_matcher_v1`` by
+    Migration 0092 -- which is the expected cohort-of-origin shape), but
+    Migration 0071 itself seeds exactly one row.  If a future PR sneaks an
+    additional manual_* seed into 0071, this test fires.
 
     Scope refinement post-Migration-0091 (session 107 Slot B dispatch):
     the test was originally a COUNT(*)==1 assertion, but Cohort 5+ Slot B
@@ -284,9 +285,10 @@ def test_seed_replay_is_idempotent_via_on_conflict_do_nothing(db_pool: Any) -> N
     """
     # Pre-condition: exactly 1 manual_v1 seed row from the migration upgrade.
     # Post-Migration-0091 the match_algorithm table has 2+ rows (manual_v1
-    # plus cohort5_event_matcher_v1); scope by name to isolate the seed
-    # under test (Pattern 73 SSOT: each migration's seed test scopes to its
-    # own seed-row identity).
+    # plus the matcher seed row -- ``event_matcher_v1`` at head state per
+    # Migration 0092 rename); scope by name to isolate the seed under test
+    # (Pattern 73 SSOT: each migration's seed test scopes to its own
+    # seed-row identity).
     with get_cursor() as cur:
         cur.execute(
             "SELECT COUNT(*) AS n FROM match_algorithm WHERE name = %s AND version = %s",

@@ -156,7 +156,7 @@ def status() -> None:
         - Pending queue depth (platform_events with game_id but no
           active canonical_event_link).
         - 24-hour action counts (create / retire / quarantine).
-        - Matcher algorithm_id (cohort5_event_matcher_v1 row from
+        - Matcher algorithm_id (event_matcher_v1 row from
           match_algorithm).
 
     Example:
@@ -207,5 +207,5 @@ def status() -> None:
     else:
         console.print(
             f"[blue]Pending queue depth {pending} -- "
-            f"matcher will process at ~{summary.get('matcher_algorithm_id', 'cohort5_event_matcher_v1')} cadence.[/blue]"
+            f"matcher will process at ~{summary.get('matcher_algorithm_id', 'event_matcher_v1')} cadence.[/blue]"
         )

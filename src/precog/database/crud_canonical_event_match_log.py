@@ -92,8 +92,11 @@ inheritance):
     Canonical home: ``constants.py:DECIDED_BY_PREFIXES``.  Conventions:
         ``'human:<username>'``    -- human-driven action (operator
                                      review / manual matcher invocation).
-        ``'service:matcher:slot-B:v1'``  -- autonomous matcher service
-                                            (steady-state pull-poller).
+        ``'service:matcher:v1'``  -- autonomous matcher service
+                                     (steady-state pull-poller).  Renamed
+                                     from ``'service:matcher:slot-B:v1'``
+                                     by Migration 0092 (session 110)
+                                     dropping session-planning shorthand.
         ``'service:cli:matcher-backfill:v1'`` -- backfill CLI invocation
                                                   (operator-triggered).
         ``'system:<context>'``    -- seed / migration / fixture writes.
@@ -160,27 +163,29 @@ logger = logging.getLogger(__name__)
 _DECIDED_BY_MAX_LENGTH = 64
 
 
-# Lazy per-process cache for the cohort5_event_matcher_v1 algorithm_id.
-# The seed row is immutable post-Migration-0091, so caching the lookup at
-# module level is safe and keeps the per-call DB cost zero after the first
-# resolution.  Mirrors slot 0073's ``_MANUAL_V1_ID_CACHE`` shape.
-_COHORT5_MATCHER_ALGO_ID_CACHE: int | None = None
+# Lazy per-process cache for the event_matcher_v1 algorithm_id.  The seed
+# row is immutable post-Migration-0091 (renamed by Migration 0092), so
+# caching the lookup at module level is safe and keeps the per-call DB
+# cost zero after the first resolution.  Mirrors slot 0073's
+# ``_MANUAL_V1_ID_CACHE`` shape.
+_EVENT_MATCHER_ALGO_ID_CACHE: int | None = None
 
 
 # =============================================================================
-# CROSS-MODULE HELPER -- cohort5_event_matcher_v1 algorithm_id resolution
+# CROSS-MODULE HELPER -- event_matcher_v1 algorithm_id resolution
 # =============================================================================
 
 
-def get_cohort5_event_matcher_algorithm_id() -> int:
-    """Resolve the canonical cohort5_event_matcher_v1 algorithm_id (lazy-cached).
+def get_event_matcher_algorithm_id() -> int:
+    """Resolve the canonical event_matcher_v1 algorithm_id (lazy-cached).
 
-    Per the cohort5_event_matcher convention (Migration 0091 seed): the
-    matcher's primary writer path uses algorithm_id pointing at this
-    seeded row.  Operator-driven review_approve / review_reject paths
-    use ``manual_v1.id`` (Migration 0071 seed) per slot 0073 precedent.
+    Per the event matcher convention (Migration 0091 seed, renamed by
+    Migration 0092): the matcher's primary writer path uses algorithm_id
+    pointing at this seeded row.  Operator-driven review_approve /
+    review_reject paths use ``manual_v1.id`` (Migration 0071 seed) per
+    slot 0073 precedent.
 
-    Centralized here (slot-B origin module) per slot 0073's
+    Centralized here (matcher-log CRUD module) per slot 0073's
     ``get_manual_v1_algorithm_id()`` precedent -- closes the helper-
     triplication that would arise if every matcher caller re-derived
     the resolution.
@@ -190,29 +195,31 @@ def get_cohort5_event_matcher_algorithm_id() -> int:
     first call hits the DB once per process.
 
     Returns:
-        The BIGSERIAL ``id`` of the cohort5_event_matcher_v1 row in
+        The BIGSERIAL ``id`` of the event_matcher_v1 row in
         match_algorithm.
 
     Raises:
         RuntimeError: if the seed row is missing (Migration 0091 not
-            applied, or seed was DELETEd).
+            applied, or seed was DELETEd; Migration 0092 not applied,
+            so row is still under the old name).
     """
-    global _COHORT5_MATCHER_ALGO_ID_CACHE
-    if _COHORT5_MATCHER_ALGO_ID_CACHE is not None:
-        return _COHORT5_MATCHER_ALGO_ID_CACHE
+    global _EVENT_MATCHER_ALGO_ID_CACHE
+    if _EVENT_MATCHER_ALGO_ID_CACHE is not None:
+        return _EVENT_MATCHER_ALGO_ID_CACHE
     with get_cursor(commit=False) as cur:
         cur.execute(
             "SELECT id FROM match_algorithm WHERE name = %s AND version = %s",
-            ("cohort5_event_matcher_v1", "1.0.0"),
+            ("event_matcher_v1", "1.0.0"),
         )
         row = cur.fetchone()
         if row is None:
             raise RuntimeError(
-                "cohort5_event_matcher_v1 algorithm row not found in match_algorithm -- "
-                "ensure Migration 0091 has run and the seed row is present"
+                "event_matcher_v1 algorithm row not found in match_algorithm -- "
+                "ensure Migrations 0091 (INSERT) and 0092 (rename) have run "
+                "and the seed row is present"
             )
-    _COHORT5_MATCHER_ALGO_ID_CACHE = cast("int", row["id"])
-    return _COHORT5_MATCHER_ALGO_ID_CACHE
+    _EVENT_MATCHER_ALGO_ID_CACHE = cast("int", row["id"])
+    return _EVENT_MATCHER_ALGO_ID_CACHE
 
 
 # =============================================================================
@@ -262,8 +269,8 @@ def append_event_match_log_row(
             start with one of ``DECIDED_BY_PREFIXES``; MUST be <= 64
             chars.
         algorithm_id: BIGINT FK into ``match_algorithm.id``.  NOT
-            NULL.  Matcher writes use ``cohort5_event_matcher_v1.id``
-            (resolved via ``get_cohort5_event_matcher_algorithm_id()``);
+            NULL.  Matcher writes use ``event_matcher_v1.id``
+            (resolved via ``get_event_matcher_algorithm_id()``);
             operator-decided rows use ``manual_v1.id`` (slot 0073
             ``get_manual_v1_algorithm_id()`` precedent).
         canonical_event_id: BIGINT FK into ``canonical_events.id``.
@@ -309,8 +316,8 @@ def append_event_match_log_row(
     Example:
         >>> log_id = append_event_match_log_row(
         ...     action="create",
-        ...     decided_by="service:matcher:slot-B:v1",
-        ...     algorithm_id=get_cohort5_event_matcher_algorithm_id(),
+        ...     decided_by="service:matcher:v1",
+        ...     algorithm_id=get_event_matcher_algorithm_id(),
         ...     canonical_event_id=42,
         ...     link_id=17,
         ...     platform_event_id=89,

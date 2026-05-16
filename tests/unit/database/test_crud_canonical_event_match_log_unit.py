@@ -8,7 +8,7 @@ Covers (function-by-function):
     - append_event_match_log_row_in_cursor: same validation
       defense-in-depth on the cursor-aware path.
     - get_event_match_log_by_action: Pattern 73 SSOT real-guard.
-    - get_cohort5_event_matcher_algorithm_id: lazy cache + RuntimeError
+    - get_event_matcher_algorithm_id: lazy cache + RuntimeError
       on missing seed.
 
 Pattern 73 SSOT real-guard discipline (#1085 finding #2 strengthening
@@ -59,7 +59,7 @@ class TestValidationHelper:
         _validate_append_event_match_log_args(
             action="create",
             confidence=Decimal("0.9"),
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
         )
 
     def test_invalid_action_raises_value_error(self) -> None:
@@ -68,7 +68,7 @@ class TestValidationHelper:
             _validate_append_event_match_log_args(
                 action="link",  # slot 0073 vocab; NOT in slot B's 6-value vocab
                 confidence=Decimal("0.9"),
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
 
     def test_invalid_decided_by_prefix_raises_value_error(self) -> None:
@@ -107,7 +107,7 @@ class TestValidationHelper:
             _validate_append_event_match_log_args(
                 action="create",
                 confidence=0.9,  # type: ignore[arg-type]  -- testing wrong type
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
 
     def test_confidence_nan_raises_value_error(self) -> None:
@@ -116,7 +116,7 @@ class TestValidationHelper:
             _validate_append_event_match_log_args(
                 action="create",
                 confidence=Decimal("NaN"),
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
 
     def test_confidence_negative_raises_value_error(self) -> None:
@@ -125,7 +125,7 @@ class TestValidationHelper:
             _validate_append_event_match_log_args(
                 action="create",
                 confidence=Decimal("-0.1"),
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
 
     def test_confidence_above_one_raises_value_error(self) -> None:
@@ -134,7 +134,7 @@ class TestValidationHelper:
             _validate_append_event_match_log_args(
                 action="create",
                 confidence=Decimal("1.5"),
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
 
     def test_confidence_none_passes(self) -> None:
@@ -163,7 +163,7 @@ class TestAppendRow:
         mock_cursor = wire_get_cursor_mock(mock_get_cursor, returning_id=42)
         result = append_event_match_log_row(
             action="create",
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
             algorithm_id=2,
             canonical_event_id=7,
             link_id=11,
@@ -191,7 +191,7 @@ class TestAppendRow:
         with pytest.raises(ValueError, match="pattern 73 SSOT"):
             append_event_match_log_row(
                 action="bogus",
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 algorithm_id=2,
             )
         # No cursor obtained -- the call must not reach get_cursor.
@@ -227,7 +227,7 @@ class TestAppendRowInCursor:
         result = append_event_match_log_row_in_cursor(
             cursor,
             action="create",
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
             algorithm_id=2,
             canonical_event_id=7,
             link_id=11,
@@ -244,7 +244,7 @@ class TestAppendRowInCursor:
             append_event_match_log_row_in_cursor(
                 cursor,
                 action="not_in_vocab",
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 algorithm_id=2,
             )
         cursor.execute.assert_not_called()

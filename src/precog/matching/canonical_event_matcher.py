@@ -31,7 +31,7 @@ Two operational modes:
 Pattern 73 SSOT inventory (reused from existing constants):
 
     - ``CREATED_BY_PREFIXES`` (constants.py): canonical_events.created_by
-      vocabulary.  Matcher uses ``CREATED_BY_MATCHER`` (= 'matcher:slot-B:v1')
+      vocabulary.  Matcher uses ``CREATED_BY_MATCHER`` (= 'matcher:v1')
       for steady-state writes; ``CREATED_BY_BACKFILL`` (= 'cli:matcher-backfill:v1')
       for backfill CLI writes.
     - ``CANONICAL_EVENT_LIFECYCLE_PHASES`` (constants.py): matcher
@@ -39,7 +39,7 @@ Pattern 73 SSOT inventory (reused from existing constants):
       spec Q5; phase advancement is downstream scope).
     - ``LINK_STATE_VALUES``: matcher creates links with ``link_state='active'``.
     - ``DECIDED_BY_PREFIXES``: matcher's audit-log + link rows use
-      ``DECIDED_BY_MATCHER`` (= 'service:matcher:slot-B:v1') for
+      ``DECIDED_BY_MATCHER`` (= 'service:matcher:v1') for
       steady-state; ``DECIDED_BY_BACKFILL`` (= 'service:cli:matcher-backfill:v1')
       for backfill CLI.
     - ``CANONICAL_EVENT_MATCH_LOG_ACTION_VALUES``: matcher writes
@@ -54,7 +54,7 @@ session-92 council convergence):
     3. Alerts -- system_health row + alert on queue depth.
     4. Operator visibility -- rate metric + CLI status + queryable
        log.
-    5. created_by -- 'matcher:slot-B:v1' / 'cli:matcher-backfill:v1'.
+    5. created_by -- 'matcher:v1' / 'cli:matcher-backfill:v1'.
     6. Signal handler -- BasePoller mechanical inheritance.
     7. Integration -- new CRUD modules + ServiceSupervisor + CLI.
     8. Backpressure -- 30s poll interval; --batch-size on backfill;
@@ -92,7 +92,7 @@ from precog.database.crud_canonical_entity import (
 from precog.database.crud_canonical_event_links import create_link_in_cursor
 from precog.database.crud_canonical_event_match_log import (
     append_event_match_log_row_in_cursor,
-    get_cohort5_event_matcher_algorithm_id,
+    get_event_matcher_algorithm_id,
 )
 from precog.database.crud_canonical_event_participants import (
     get_canonical_participant_role_id_by_domain_and_role,
@@ -112,8 +112,10 @@ logger = logging.getLogger(__name__)
 
 # canonical_events.created_by identity for steady-state matcher writes.
 # Pattern 73 SSOT pointer to constants.py:CREATED_BY_PREFIXES (matcher:
-# prefix family).
-CREATED_BY_MATCHER = "matcher:slot-B:v1"
+# prefix family).  Renamed from "matcher:slot-B:v1" by Migration 0092
+# (session 110) dropping session-planning shorthand from production
+# data values.
+CREATED_BY_MATCHER = "matcher:v1"
 
 # canonical_events.created_by identity for backfill CLI writes.
 # Pattern 73 SSOT pointer to constants.py:CREATED_BY_PREFIXES (cli: prefix
@@ -122,8 +124,10 @@ CREATED_BY_BACKFILL = "cli:matcher-backfill:v1"
 
 # canonical_event_links.decided_by + canonical_event_match_log.decided_by
 # identity for steady-state matcher writes.  Pattern 73 SSOT pointer to
-# constants.py:DECIDED_BY_PREFIXES (service: prefix family).
-DECIDED_BY_MATCHER = "service:matcher:slot-B:v1"
+# constants.py:DECIDED_BY_PREFIXES (service: prefix family).  Renamed
+# from "service:matcher:slot-B:v1" by Migration 0092 (session 110)
+# dropping session-planning shorthand from production data values.
+DECIDED_BY_MATCHER = "service:matcher:v1"
 
 # canonical_event_links.decided_by + canonical_event_match_log.decided_by
 # identity for backfill CLI writes.
@@ -448,7 +452,7 @@ def _resolve_team_entity_id(
             team_entity_kind_id,
             entity_key,
             team_code,
-            json.dumps({"created_by": "matcher:slot-B:v1"}),
+            json.dumps({"created_by": "matcher:v1"}),
         ),
     )
     row = cur.fetchone()
@@ -549,7 +553,7 @@ def _match_one_candidate(
         cur: psycopg2 cursor under active transaction.
         candidate: materialized candidate row from the matcher's
             SELECT.
-        algorithm_id: cohort5_event_matcher_v1 (or manual_v1 for
+        algorithm_id: event_matcher_v1 (or manual_v1 for
             operator-driven invocations).
         created_by: canonical_events.created_by identity string.
         decided_by: canonical_event_links.decided_by +
@@ -676,7 +680,7 @@ def _match_one_candidate(
                     json.dumps(
                         {
                             "source_game_id": candidate.game_id,
-                            "matcher_version": "slot-B:v1",
+                            "matcher_version": "v1",
                         }
                     ),
                     created_by,
@@ -760,7 +764,7 @@ def _match_one_candidate(
                 "sport": candidate.sport,
                 "game_date": candidate.game_date,
             },
-            note=f"matcher slot-B: linked platform_event_id={candidate.platform_event_id}",
+            note=f"matcher v1: linked platform_event_id={candidate.platform_event_id}",
         )
 
         # Step 8: UPDATE games.canonical_event_id back-link.
@@ -1083,7 +1087,7 @@ def backfill_all(
         - CLI: ``precog matcher backfill --all``
     """
     receipt = BackfillReceipt()
-    algorithm_id = get_cohort5_event_matcher_algorithm_id()
+    algorithm_id = get_event_matcher_algorithm_id()
 
     # PR-C: resolve lookup-table IDs once at backfill start.  Pattern
     # 73 SSOT (no hardcoded integer literals); single startup hit per
@@ -1343,7 +1347,7 @@ class CanonicalEventMatcher(BasePoller):
         missing (propagates from _resolve_matcher_lookup_ids).
         """
         if self._algorithm_id is None:
-            self._algorithm_id = get_cohort5_event_matcher_algorithm_id()
+            self._algorithm_id = get_event_matcher_algorithm_id()
         if self._team_entity_kind_id is None:
             (
                 self._team_entity_kind_id,
@@ -1502,7 +1506,7 @@ def get_matcher_status_summary() -> dict[str, Any]:
             - unlinked_platform_events: count of platform_events with
               game_id but no active canonical_event_link (matcher's
               pending queue).
-            - matcher_algorithm_id: id of cohort5_event_matcher_v1 in
+            - matcher_algorithm_id: id of event_matcher_v1 in
               match_algorithm.
 
     Example:
@@ -1581,7 +1585,7 @@ def get_matcher_status_summary() -> dict[str, Any]:
     # Algorithm id from the match_algorithm seed row.
     algo = fetch_one(
         "SELECT id FROM match_algorithm WHERE name = %s AND version = %s",
-        ("cohort5_event_matcher_v1", "1.0.0"),
+        ("event_matcher_v1", "1.0.0"),
     )
     if algo is not None:
         summary["matcher_algorithm_id"] = int(algo["id"])

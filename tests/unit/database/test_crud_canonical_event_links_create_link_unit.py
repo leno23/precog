@@ -45,7 +45,7 @@ class TestValidateCreateLinkArgs:
 
     def test_valid_args_no_raise(self) -> None:
         _validate_create_link_args(
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
             link_state="active",
             confidence=Decimal("0.95"),
         )
@@ -53,7 +53,7 @@ class TestValidateCreateLinkArgs:
     def test_invalid_link_state_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="pattern 73 SSOT vocabulary violation"):
             _validate_create_link_args(
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="invalid",
                 confidence=Decimal("0.95"),
             )
@@ -78,7 +78,7 @@ class TestValidateCreateLinkArgs:
     def test_confidence_float_raises_type_error(self) -> None:
         with pytest.raises(TypeError, match="Critical Pattern #1"):
             _validate_create_link_args(
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="active",
                 confidence=0.95,  # type: ignore[arg-type]
             )
@@ -86,7 +86,7 @@ class TestValidateCreateLinkArgs:
     def test_confidence_nan_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="must not be Decimal\\('NaN'\\)"):
             _validate_create_link_args(
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="active",
                 confidence=Decimal("NaN"),
             )
@@ -94,7 +94,7 @@ class TestValidateCreateLinkArgs:
     def test_confidence_out_of_bounds_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="must be in \\[0, 1\\]"):
             _validate_create_link_args(
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="active",
                 confidence=Decimal("1.5"),
             )
@@ -117,7 +117,7 @@ class TestCreateLink:
             platform_event_id=89,
             confidence=Decimal("0.987"),
             algorithm_id=2,
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
         )
         assert result == 17
         assert mock_cursor.execute.call_count == 1
@@ -137,7 +137,7 @@ class TestCreateLink:
                 platform_event_id=89,
                 confidence=Decimal("0.987"),
                 algorithm_id=2,
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="invalid",
             )
         mock_get_cursor.assert_not_called()
@@ -152,7 +152,7 @@ class TestCreateLink:
                 platform_event_id=89,
                 confidence=0.987,  # type: ignore[arg-type]
                 algorithm_id=2,
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
             )
         mock_get_cursor.assert_not_called()
 
@@ -174,7 +174,7 @@ class TestCreateLinkInCursor:
             platform_event_id=89,
             confidence=Decimal("0.987"),
             algorithm_id=2,
-            decided_by="service:matcher:slot-B:v1",
+            decided_by="service:matcher:v1",
         )
         assert result == 25
         assert cursor.execute.call_count == 1
@@ -188,7 +188,7 @@ class TestCreateLinkInCursor:
                 platform_event_id=89,
                 confidence=Decimal("0.987"),
                 algorithm_id=2,
-                decided_by="service:matcher:slot-B:v1",
+                decided_by="service:matcher:v1",
                 link_state="invalid_state",
             )
         cursor.execute.assert_not_called()

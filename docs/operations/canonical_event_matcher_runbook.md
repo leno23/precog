@@ -152,7 +152,7 @@ If `system_health` row is `down` or `last_check` is stale (> 5x interval): super
 
 - DB connection pool exhausted (high concurrent load).
 - Migration 0091 not applied (alembic head lower than 0091).
-- `cohort5_event_matcher_v1` seed row missing from `match_algorithm` (Migration 0091 downgrade was run without re-upgrade).
+- `event_matcher_v1` seed row missing from `match_algorithm` (Migration 0091 downgrade was run without re-upgrade, or Migration 0092 rename was reverted; the row was originally seeded as `cohort5_event_matcher_v1` by Migration 0091 and renamed by Migration 0092).
 
 ### 5.2 Pending queue growing unbounded
 

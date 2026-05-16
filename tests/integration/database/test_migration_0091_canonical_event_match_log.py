@@ -20,7 +20,10 @@ Test groups:
       algorithm_id NO ACTION (default), prior_link_id ON DELETE SET NULL.
     - canonical_events.created_by column: NOT NULL, default
       'legacy:pre-matcher', VARCHAR(64).
-    - match_algorithm seed row: cohort5_event_matcher_v1 v1.0.0 exists.
+    - match_algorithm seed row: event_matcher_v1 v1.0.0 exists (was
+      originally seeded as cohort5_event_matcher_v1 by Migration 0091;
+      renamed to event_matcher_v1 by Migration 0092 session 110 to
+      drop session-planning shorthand from production data values).
     - Pattern 73 SSOT discipline: action constant matches CHECK vocab.
 
 Issue: Epic #972 (Canonical Layer Foundation -- Phase B.5),
@@ -307,9 +310,10 @@ def test_canonical_events_created_by_column_present(db_pool: Any) -> None:
 
 def test_created_by_prefixes_constant_includes_matcher_and_legacy() -> None:
     """Pattern 73 SSOT: CREATED_BY_PREFIXES constant covers matcher's identity prefixes."""
-    # The matcher writes 'matcher:slot-B:v1' (matcher: prefix); the backfill
-    # CLI writes 'cli:matcher-backfill:v1' (cli: prefix); the migration default
-    # uses 'legacy:pre-matcher' (legacy: prefix).
+    # The matcher writes 'matcher:v1' (matcher: prefix; renamed from
+    # 'matcher:slot-B:v1' by Migration 0092 session 110); the backfill
+    # CLI writes 'cli:matcher-backfill:v1' (cli: prefix); the migration
+    # default uses 'legacy:pre-matcher' (legacy: prefix).
     assert "matcher:" in CREATED_BY_PREFIXES, (
         f"CREATED_BY_PREFIXES missing 'matcher:' prefix: {CREATED_BY_PREFIXES!r}"
     )
@@ -326,22 +330,33 @@ def test_created_by_prefixes_constant_includes_matcher_and_legacy() -> None:
 # =============================================================================
 
 
-def test_match_algorithm_seed_cohort5_event_matcher_v1_present(
+def test_match_algorithm_seed_event_matcher_v1_present(
     db_pool: Any,
 ) -> None:
-    """Migration 0091 seeds the cohort5_event_matcher_v1 algorithm row."""
+    """Migration 0091 seeds the matcher algorithm row; Migration 0092 renamed it.
+
+    Originally seeded as 'cohort5_event_matcher_v1' by Migration 0091 INSERT;
+    renamed to 'event_matcher_v1' by Migration 0092 (session 110) to drop
+    session-planning shorthand from production data values.  This test runs
+    against alembic head state, so the lookup uses the post-0092 name.
+
+    Migration 0091's file is immutable per Pattern 87 -- its docstring and
+    SQL still reference the original 'cohort5_event_matcher_v1' name; the
+    rename is documented in Migration 0092's docstring.
+    """
     with get_cursor() as cur:
         cur.execute(
             """
             SELECT id, name, version, code_ref
             FROM match_algorithm
-            WHERE name = 'cohort5_event_matcher_v1' AND version = '1.0.0'
+            WHERE name = 'event_matcher_v1' AND version = '1.0.0'
             """
         )
         row = cur.fetchone()
     assert row is not None, (
-        "match_algorithm seed row 'cohort5_event_matcher_v1' v1.0.0 missing -- "
-        "Migration 0091 INSERT did not run or was reverted"
+        "match_algorithm seed row 'event_matcher_v1' v1.0.0 missing -- "
+        "Migration 0091 INSERT did not run, or Migration 0092 rename did "
+        "not land, or the row was reverted"
     )
     assert row["code_ref"] == "precog.matching.canonical_event_matcher", (
         f"seed row code_ref={row['code_ref']!r}; expected 'precog.matching.canonical_event_matcher'"
