@@ -14319,6 +14319,136 @@ via broader-grep that PM should adjudicate adding to scope.
 
 ---
 
+## Pattern 97: Orchestrator-Registered Service Activation Surface — 5-Artifact Deliverable Matrix (ALWAYS for New Services Behind a Feature Flag)
+
+**Severity:** HIGH — when a service-supervisor-registered service ships without its full activation surface, it becomes a *credibility trap*: a future engineer reading `SERVICE_FACTORIES` assumes the service is operational; an operator following the runbook hits the gap at activation time after sessions of preparation work. The N=3 evidence corpus (slot 0078 canonical_observations_writer CLI gap + Slot B canonical_event_matcher CLI gap + Slot B canonical_event_matcher SystemHealthComponent enum gap) shows the same mechanism repeating across two services in the same arc, each instance shipping through ALL pipeline gates (S82 design-stage P41, Builder dispatch, multi-reviewer audit, Sentinel, claude-review) because no single artifact in the build deliverable matrix enumerated the full activation surface. Cost of late catches scales with how far past flag-flip the gap is discovered (build-time < soak < first-production-run < customer-impact).
+
+### Problem / Trigger
+
+A PM dispatches a Builder for a new service that registers with `ServiceSupervisor` (or equivalent orchestrator) AND defaults to "behind a feature flag." The build spec deliverable matrix lists the obvious items: factory function, YAML config key, runbook. The Builder executes the spec, runs tests, ships clean. Everything *looks* operational at the registry surface.
+
+Then activation reveals the gaps — not in build-time tests but in operational use:
+
+- **CLI seam missing.** Operator runs `precog scheduler start --supervised`; service doesn't appear in default-enabled set even though YAML flag is true. Reason: no `--<service-name>` flag on `cli/scheduler.py`; no `RunnerConfig.__post_init__` membership.
+- **System health enum missing.** Service starts, polls cleanly, but `system_health` table has zero rows. Runbook's health-check query returns nothing. Operator concludes "service isn't running" when in fact it's perfectly fine. Reason: service's component name not in `SystemHealthComponent` Literal / `VALID_SYSTEM_HEALTH_COMPONENTS` frozenset.
+- **Default-services membership missing.** Service runs only with explicit CLI flag; production scheduler-start workflows don't pick it up. Reason: not added to YAML `scheduler.default_enabled_services` set OR `RunnerConfig.__post_init__` default-service expansion.
+
+**Session 109 + 111 origin (canonical failure mode):** Two services from the canonical-layer arc shipped this shape:
+
+1. **Slot 0078 `canonical_observations_writer` (session 86):** factory registered, YAML config present, runbook authored, runbook honestly disclosed "operator must hand-write wrapper script" — but **no `--canonical-observations-writer` CLI flag, no `RunnerConfig` membership**. Orphan for ~23 sessions until session 109's CLI seam fix (PR #1209).
+2. **Slot B `canonical_event_matcher` (session 107):** identical shape — factory registered, YAML config present, runbook authored, runbook §4 lines 81-86 disclosed the asymmetry. Same gaps. Closed alongside slot 0078 by PR #1209.
+3. **Slot B `canonical_event_matcher` (session 111):** different surface, same pattern — `SystemHealthComponent` Literal at `crud_shared.py:73-83` doesn't include `'canonical_event_matcher'`. Every heartbeat fails the app-layer allowlist; `system_health` has zero matcher rows; runbook's §3 health-check query returns nothing. Caught by session-111 dev soak when operator watched the scheduler logs for ~5 minutes and noticed warnings hammering at every 30-second poll. Filed as #1221.
+
+The five defenses that missed instances #1 and #2 — S82 design-stage P41, Builder dispatch (spec-follower not spec-completeness-auditor), Reviewer pipeline (audits code correctness not "is this startable"), runbook authoring (disclosed in prose not enforcement-bearing), Pattern 91 V1.45+ (PM premise verification for live schema state) — also missed instance #3. The same 5-defense table from `feedback_cli_orphan_pattern_canonical_layer.md` applies identically to the system_health surface.
+
+### The Pattern / Rule
+
+> When a build spec ships a production module that **registers with `ServiceSupervisor`** (or equivalent orchestrator) AND defaults to "behind a feature flag," the build deliverable matrix MUST list **five** artifacts and the PM dispatch prompt MUST enumerate them explicitly. If any of the five is "deferred to follow-up" or "manual wrapper script," that deferral converts to a **P0 issue at design-time** — NOT an honest disclosure in the runbook that gets read once at session close and then forgotten.
+
+**The five artifacts:**
+
+```text
+1. YAML CONFIG KEY — features.<service_name>.enabled in src/precog/config/system.yaml
+   Default: false (gate on soak-passing before flipping).
+
+2. SERVICE_FACTORIES ENTRY — in src/precog/schedulers/service_supervisor.py
+   Maps service name → factory function. Drives instantiation.
+
+3. CLI ACTIVATION FLAG — in src/precog/cli/scheduler.py
+   --<service-name> on `scheduler start --supervised`.
+   Adds the service to `enabled_services` set passed to `create_services()`.
+
+4. RUNNERCONFIG DEFAULT-SERVICE MEMBERSHIP — in service_supervisor.py
+   __post_init__ reads features.<service_name>.enabled and emits the
+   ServiceConfig with enabled=True when YAML flag is true.
+   Closes the "registered-but-not-startable" gap.
+
+5. SYSTEMHEALTHCOMPONENT ENUM ENTRY — in src/precog/database/crud_shared.py
+   Service's component name in SystemHealthComponent Literal AND
+   VALID_SYSTEM_HEALTH_COMPONENTS frozenset (auto-derived).
+   Without this, heartbeats fail the app-layer allowlist + system_health
+   table stays empty + runbook health-check query returns nothing +
+   self-healing logic (Cap 6, #1212) can't fire because it reads
+   system_health.
+```
+
+**Anti-pattern shape:** Build deliverable matrix lists 1-3 of the five artifacts. Builder ships them. Runbook author honestly discloses the gaps for the missing 1-2. Disclosure-in-prose ≠ compliance: the disclosure isn't enforcement-bearing, gets read once at session close, then forgotten. Same shape regardless of which artifacts are missing — N=3 evidence demonstrates the gap can manifest in different combinations of the 5 artifacts across different services in the same arc.
+
+### Canonical Shape
+
+**At PM dispatch time, the dispatch prompt MUST include this enumeration block:**
+
+```text
+DELIVERABLE MATRIX (5 artifacts — ALL must be in scope or filed as P0 follow-up):
+
+[ ] 1. YAML config key:
+      features.<service_name>.enabled in src/precog/config/system.yaml
+      Default: false. Comment: "<service_name> — flip to true at session N+ soak start"
+
+[ ] 2. SERVICE_FACTORIES entry:
+      _create_<service_name>() function + entry in SERVICE_FACTORIES dict
+      in src/precog/schedulers/service_supervisor.py
+
+[ ] 3. CLI activation flag:
+      --<service-name> Option in src/precog/cli/scheduler.py scheduler start command
+      Updates `enabled_services` set in the supervised-mode path
+
+[ ] 4. RunnerConfig default-service membership:
+      Membership in RunnerConfig.__post_init__ gated on YAML flag from artifact 1
+      Test: test_runner_config_<service>_membership_when_yaml_enabled
+
+[ ] 5. SystemHealthComponent enum entry:
+      Add to SystemHealthComponent Literal in src/precog/database/crud_shared.py
+      Auto-included in VALID_SYSTEM_HEALTH_COMPONENTS frozenset
+      Test: test_system_health_component_includes_<service_name>
+```
+
+**Regression gate test (filed as #1221 acceptance criterion):** parameterize over `SERVICE_FACTORIES` and assert every registered service name appears in `VALID_SYSTEM_HEALTH_COMPONENTS`:
+
+```python
+@pytest.mark.parametrize("service_name", list(SERVICE_FACTORIES.keys()))
+def test_supervisor_service_has_system_health_component_entry(service_name):
+    """Every supervisor-registered service must have a SystemHealthComponent enum entry,
+    or its heartbeat writes fail silently + system_health stays empty + runbook
+    health-check queries return nothing (Pattern 97; #1221)."""
+    assert service_name in VALID_SYSTEM_HEALTH_COMPONENTS, (
+        f"{service_name!r} is registered in SERVICE_FACTORIES but missing from "
+        f"SystemHealthComponent enum. Add to "
+        f"src/precog/database/crud_shared.py Literal + frozenset."
+    )
+```
+
+This test, had it existed, would have failed at build-time for slot 0078 AND Slot B — closing the entire class of bug at CI gate.
+
+### When This Applies
+
+- New services registered with `ServiceSupervisor` (or equivalent orchestrator) AND defaulting to "behind a feature flag."
+- Lock-step extensions: any service migrating from "always-on" → "feature-flag-gated" must pass through the 5-artifact check.
+- Multi-platform expansion: future Polymarket-side mirrors of existing services need the same matrix verification.
+
+### When This Does NOT Apply
+
+- One-shot CLI commands not registered with the supervisor (e.g., `precog backup restore`).
+- Always-on services that never gated behind a feature flag (the YAML key is N/A).
+- Internal helpers that don't expose any operator surface.
+
+### Related Patterns
+
+- **Pattern 96** (Comprehensive Audit-Set Discipline) — sibling discipline at the modification level; Pattern 97 is the new-service version.
+- **Pattern 91 V1.45+** (MCP-First Premise Verification) — chain-of-trust for PM dispatch prompts. Pattern 97 extends it to deliverable-matrix completeness.
+- **Pattern 73 SSOT** — the regression gate test (parameterized over SERVICE_FACTORIES) is a Pattern 73 SSOT artifact: `SERVICE_FACTORIES` is the canonical service registry; `VALID_SYSTEM_HEALTH_COMPONENTS` becomes a derived projection.
+- **`feedback_cli_orphan_pattern_canonical_layer.md`** — the N=1+2 origin memo (sessions 86 + 107) that this Pattern formalizes after N=3 evidence (session 111).
+
+### Source References
+
+- **`feedback_cli_orphan_pattern_canonical_layer.md`** — origin memo (sessions 86 + 107 + 109)
+- **#1209** — closed the CLI seam orphans for both slot 0078 + Slot B (session 109)
+- **#1221** — closes the SystemHealthComponent enum gap for Slot B (session 111)
+- **session 111 dev soak** — empirical evidence for instance #3; surfaced by 5 minutes of scheduler log observation when integration tests + reviewers + S82 + Pattern 91 all missed it
+- **session 111 close summary** — full session-111 finding context
+
+---
+
 V1.33 Updates:
 - Extended Pattern 43 (Mock Schema Fidelity) with the 4-grep "Audit Checklist — Grep Scope" subsection covering function-name, `fetchone.side_effect/return_value`, `execute.call_count`, and `call_args_list[N]` greps. Source: Session 60 C2c Migration 0062 incident (`feedback_mock_fidelity_pattern43_grep_scope.md`) — 3 agents signed off, pre-push caught 18 stale mocks.
 - Extended Pattern 73 ("Keep Heading, Replace Body with Pointer") with "Systematic Compliance — Detection & Prevention" subsection covering detection heuristic, consolidate-or-point rule, and the recursive case. Source: Session 66 three-violation cluster (`feedback_pattern_73_recursive_application.md`).
