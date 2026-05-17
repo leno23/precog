@@ -181,7 +181,7 @@ repos:
               echo "  isinstance(exit_code, int):      $count_isinstance"
               echo ""
               echo "Fix: tighten the assertion (assert result.exit_code == 0)"
-              echo "Or update baseline: echo $current > $baseline_file"
+              echo "Or update baseline: sed -i.bak 's/^[0-9]*\$/$current/' tests/.loose_assertion_baseline && rm tests/.loose_assertion_baseline.bak"
               echo "Reference: #770 (Hook 1.5 — loose assertion ratchet)"
               exit 1
             fi
